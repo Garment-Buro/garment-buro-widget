@@ -1,0 +1,50 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "GARMENT BURO Widget",
+  "version": "0.1.11",
+  "identifier": "ru.garmentburo.projectcontrol",
+  "build": {
+    "frontendDist": "../desktop-dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run desktop:dev",
+    "beforeBuildCommand": "npm run desktop:build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "GARMENT BURO",
+        "width": 540,
+        "height": 280,
+        "minWidth": 420,
+        "minHeight": 220,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "publisher": "GARMENT BURO",
+    "copyright": "Copyright GARMENT BURO",
+    "shortDescription": "Живой виджет задач GARMENT BURO",
+    "longDescription": "Персональный рабочий виджет и полный дэшборд проекта GARMENT BURO.",
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "android": {
+      "debugApplicationIdSuffix": ".debug"
+    }
+  }
+}

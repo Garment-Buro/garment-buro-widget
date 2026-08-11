@@ -1,0 +1,49 @@
+name: Desktop installers
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            artifact_name: garment-buro-windows-x64
+            build_args: --bundles nsis
+            artifact_path: src-tauri/target/release/bundle/nsis/*.exe
+            rust_targets: x86_64-pc-windows-msvc
+          - platform: macos-14
+            artifact_name: garment-buro-macos-universal
+            build_args: --target universal-apple-darwin --bundles app,dmg
+            artifact_path: |
+              src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+              src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        with:
+          args: ${{ matrix.build_args }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
