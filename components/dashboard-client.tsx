@@ -45,8 +45,19 @@ import {
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { formatDate } from "@/lib/date";
+import { buildDependencySummary } from "@/lib/domain/dependency-engine";
+import { calculateProgress } from "@/lib/domain/progress-engine";
+import { buildPersonalTaskQueue, type LocalTaskSignal } from "@/lib/domain/task-queue";
 import { rewardTierForPercent } from "@/lib/reward-tier";
-import type { DashboardState, Person, ProgressGate, Task } from "@/lib/types";
+import {
+  requestTaskActionHelp,
+  saveTaskActionMock,
+  type TaskActionIntent,
+  type TaskActionSubmission
+} from "@/lib/services/task-action-service";
+import type { DashboardState, DependencySummary, Person, ProgressGate, Task } from "@/lib/types";
+
+export type { TaskActionSubmission } from "@/lib/services/task-action-service";
 
 const refreshMs = 60_000;
 const completedStatuses = new Set(["DONE", "CANCELLED"]);
@@ -59,13 +70,22 @@ const personAssets: Partial<Record<string, { full: string; avatar: string }>> = 
 
 type WorkspaceView = "personal" | "tree";
 type IconComponent = LucideIcon;
-type TaskActionIntent = "stuck" | "waiting" | "fact" | "done";
 type TaskActionConfirmation = "idle" | "saving" | "success";
+type BlockerOutcome = "helped" | "blocked";
 
-export type TaskActionSubmission = {
-  taskId: string;
-  intent: TaskActionIntent;
+type TaskActionDraft = {
+  note: string;
+  nextCheckDate: string;
+  blockerOutcome: BlockerOutcome | null;
+  doneConfirmed: boolean;
 };
+
+const emptyTaskActionDraft = (): TaskActionDraft => ({
+  note: "",
+  nextCheckDate: "",
+  blockerOutcome: null,
+  doneConfirmed: false
+});
 
 type LaneDefinition = {
   id: string;
@@ -127,6 +147,8 @@ export function DashboardClient({
   const [state, setState] = useState(initialState);
   const [view, setView] = useState<WorkspaceView>("personal");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [focusedTaskId, setFocusedTaskId] = useState("");
+  const [localTaskSignals, setLocalTaskSignals] = useState<Record<string, LocalTaskSignal>>({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [treeSearch, setTreeSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
@@ -155,10 +177,28 @@ export function DashboardClient({
   }, [refresh]);
 
   const person = state.person;
-  const currentTask = state.currentTask;
-  const ownedTasks = state.tasks.filter((task) => task.owner === person?.name && !completedStatuses.has(task.status));
-  const downstream = currentTask ? collectDownstream(currentTask, state.tasks) : [];
-  const directUnlocks = state.dependencies.unlocks;
+  const effectiveTasks = useMemo(
+    () => state.tasks.map((task) => localTaskSignals[task.id] === "done" ? { ...task, status: "DONE" } : task),
+    [localTaskSignals, state.tasks]
+  );
+  const taskQueue = useMemo(
+    () => person ? buildPersonalTaskQueue(effectiveTasks, person.name, localTaskSignals) : [],
+    [effectiveTasks, localTaskSignals, person]
+  );
+  const currentTask = taskQueue.find((task) => task.id === focusedTaskId) || taskQueue[0] || state.currentTask;
+  const ownedTasks = effectiveTasks.filter((task) => task.owner === person?.name && !completedStatuses.has(task.status));
+  const downstream = currentTask ? collectDownstream(currentTask, effectiveTasks) : [];
+  const focusedDependencies = currentTask
+    ? buildDependencySummary(currentTask, effectiveTasks, state.progressGates)
+    : state.dependencies;
+  const focusedProgress = calculateProgress(
+    state.goal,
+    state.progressGates,
+    currentTask,
+    focusedDependencies,
+    state.changeEvents
+  ).progress;
+  const directUnlocks = focusedDependencies.unlocks;
   const fallbackTask = ownedTasks.find(
     (task) => task.id !== currentTask?.id && !task.blockedBy.length && task.status !== "WAITING_EXTERNAL"
   );
@@ -174,6 +214,29 @@ export function DashboardClient({
     : state.sources.some((source) => source.status === "STALE")
       ? "STALE"
       : "LIVE";
+
+  useEffect(() => {
+    if (!taskQueue.length) return;
+    if (!taskQueue.some((task) => task.id === focusedTaskId)) setFocusedTaskId(taskQueue[0].id);
+  }, [focusedTaskId, taskQueue]);
+
+  const confirmTaskAction = useCallback(async (submission: TaskActionSubmission) => {
+    if (onConfirmTaskAction) await onConfirmTaskAction(submission);
+    else await saveTaskActionMock(submission);
+
+    const queueIndex = taskQueue.findIndex((task) => task.id === submission.taskId);
+    const nextTask = taskQueue[queueIndex + 1];
+    const shouldAdvance = submission.intent === "done"
+      || submission.intent === "waiting"
+      || (submission.intent === "stuck" && submission.details.blockerOutcome === "blocked");
+    const signal = submission.intent === "stuck" && submission.details.blockerOutcome === "helped"
+      ? "fact"
+      : submission.intent;
+
+    setLocalTaskSignals((signals) => ({ ...signals, [submission.taskId]: signal }));
+    if (submission.intent === "done") setFocusedTaskId("");
+    else if (shouldAdvance && nextTask) setFocusedTaskId(nextTask.id);
+  }, [onConfirmTaskAction, taskQueue]);
 
   if (!person || !currentTask) {
     return (
@@ -192,6 +255,10 @@ export function DashboardClient({
           state={state}
           person={person}
           currentTask={currentTask}
+          taskQueue={taskQueue}
+          localTaskSignals={localTaskSignals}
+          dependencies={focusedDependencies}
+          focusedProgress={focusedProgress}
           downstream={downstream}
           directUnlocks={directUnlocks}
           fallbackTask={fallbackTask}
@@ -203,8 +270,9 @@ export function DashboardClient({
           onRefresh={refresh}
           onOpenTree={() => setView("tree")}
           onOpenTask={setSelectedTask}
+          onFocusTask={setFocusedTaskId}
           onExit={onExit || (() => window.location.assign("/widget"))}
-          onConfirmTaskAction={onConfirmTaskAction}
+          onConfirmTaskAction={confirmTaskAction}
         />
       ) : (
         <TaskTree
@@ -235,6 +303,10 @@ function PersonalWorkspace({
   state,
   person,
   currentTask,
+  taskQueue,
+  localTaskSignals,
+  dependencies,
+  focusedProgress,
   directUnlocks,
   fallbackTask,
   waitingTask,
@@ -245,12 +317,17 @@ function PersonalWorkspace({
   onRefresh,
   onOpenTree,
   onOpenTask,
+  onFocusTask,
   onExit,
   onConfirmTaskAction
 }: {
   state: DashboardState;
   person: Person;
   currentTask: Task;
+  taskQueue: Task[];
+  localTaskSignals: Record<string, LocalTaskSignal>;
+  dependencies: DependencySummary;
+  focusedProgress: DashboardState["progress"];
   downstream: Task[];
   directUnlocks: Task[];
   fallbackTask?: Task;
@@ -262,38 +339,42 @@ function PersonalWorkspace({
   onRefresh: () => void;
   onOpenTree: () => void;
   onOpenTask: (task: Task) => void;
+  onFocusTask: (taskId: string) => void;
   onExit: () => void;
   onConfirmTaskAction?: (submission: TaskActionSubmission) => Promise<void>;
 }) {
   const [taskAction, setTaskAction] = useState<TaskActionIntent | null>(null);
+  const [taskActionDraft, setTaskActionDraft] = useState<TaskActionDraft>(emptyTaskActionDraft);
+  const [assistantReply, setAssistantReply] = useState("");
+  const [isRequestingHelp, setIsRequestingHelp] = useState(false);
   const [confirmation, setConfirmation] = useState<TaskActionConfirmation>("idle");
   const goal = state.goal;
   const waitingOwners = unique(directUnlocks.map((task) => task.owner).filter((owner) => owner && owner !== person.name));
   const handoffLabel = currentTask.deadline ? `Срок ${shortDate(currentTask.deadline)}` : "Срок не задан";
-  const taskImpact = state.progress.taskPotentialPercent;
-  const afterTaskProgress = state.progress.afterTaskPercent;
+  const taskImpact = focusedProgress.taskPotentialPercent;
+  const afterTaskProgress = focusedProgress.afterTaskPercent;
   const trackerTier = rewardTierForPercent(taskImpact);
   const taskContext = state.taskContexts.find((context) => context.taskId === currentTask.id);
   const relatedIssue = state.issues.find((issue) => issue.relatedTask === currentTask.id);
-  const ownedTasks = state.tasks.filter((task) => task.owner === person.name && !completedStatuses.has(task.status));
-  const currentIndex = Math.max(0, ownedTasks.findIndex((task) => task.id === currentTask.id));
-  const previousTask = ownedTasks.length > 1 ? ownedTasks[(currentIndex - 1 + ownedTasks.length) % ownedTasks.length] : undefined;
-  const nextTask = ownedTasks.length > 1 ? ownedTasks[(currentIndex + 1) % ownedTasks.length] : undefined;
-  const incoming = state.dependencies.blockedBy.slice(0, 2);
+  const currentIndex = Math.max(0, taskQueue.findIndex((task) => task.id === currentTask.id));
+  const previousTask = currentIndex > 0 ? taskQueue[currentIndex - 1] : undefined;
+  const nextTask = currentIndex < taskQueue.length - 1 ? taskQueue[currentIndex + 1] : undefined;
+  const incoming = dependencies.blockedBy.slice(0, 2);
   const outgoingTasks = directUnlocks.slice(0, 2);
-  const outgoingGates = state.dependencies.unlocksGates.slice(0, Math.max(0, 2 - outgoingTasks.length));
+  const outgoingGates = dependencies.unlocksGates.slice(0, Math.max(0, 2 - outgoingTasks.length));
   const eventTask = waitingTask || currentTask;
   const eventDate = eventTask.nextCheckDate || eventTask.deadline;
   const nextAction = relatedIssue?.nextAction || taskContext?.handoffResult || currentTask.expectedResult;
+  const actionPreview = buildTaskActionPreview(taskAction, taskActionDraft, currentTask);
   const actionNote = confirmation === "saving"
     ? "Фиксируем выбранное состояние задачи."
     : confirmation === "success"
-      ? onConfirmTaskAction
-        ? "Состояние зафиксировано в системе."
-        : "Выбор подтверждён локально. Запись в Google Drive подключим следующим этапом."
-      : taskAction
-        ? `Выбрано: «${taskActionLabel(taskAction)}». Подтвердите фиксацию следующим шагом.`
-        : "Выберите быстрое действие, если состояние задачи изменилось.";
+      ? "Состояние подтверждено локально. Запись в Google Drive подключим следующим этапом."
+      : actionPreview
+        ? "Проверьте preview и подтвердите фиксацию."
+        : taskAction
+          ? "Заполните короткую форму выбранного действия."
+          : "Выберите быстрое действие, если состояние задачи изменилось.";
 
   useEffect(() => {
     if (confirmation !== "success") return;
@@ -301,22 +382,67 @@ function PersonalWorkspace({
     return () => window.clearTimeout(timer);
   }, [confirmation]);
 
+  useEffect(() => {
+    setTaskAction(null);
+    setTaskActionDraft(emptyTaskActionDraft());
+    setAssistantReply("");
+    setIsRequestingHelp(false);
+    setConfirmation("idle");
+  }, [currentTask.id]);
+
   function selectTaskAction(intent: TaskActionIntent) {
     if (confirmation === "saving") return;
+    if (intent !== taskAction) {
+      setTaskActionDraft(emptyTaskActionDraft());
+      setAssistantReply("");
+      setIsRequestingHelp(false);
+    }
     setTaskAction(intent);
     setConfirmation("idle");
   }
 
+  function closeTaskAction() {
+    if (confirmation === "saving") return;
+    setTaskAction(null);
+    setTaskActionDraft(emptyTaskActionDraft());
+    setAssistantReply("");
+  }
+
+  async function requestBlockerHelp() {
+    if (!taskActionDraft.note.trim() || isRequestingHelp) return;
+    setIsRequestingHelp(true);
+    setAssistantReply("");
+    setTaskActionDraft((draft) => ({ ...draft, blockerOutcome: null }));
+    try {
+      setAssistantReply(await requestTaskActionHelp(taskActionDraft.note));
+    } finally {
+      setIsRequestingHelp(false);
+    }
+  }
+
   async function confirmTaskAction() {
-    if (!taskAction || confirmation === "saving") return;
+    if (!taskAction || !actionPreview || confirmation === "saving") return;
+    const submission: TaskActionSubmission = {
+      taskId: currentTask.id,
+      intent: taskAction,
+      details: {
+        note: taskActionDraft.note.trim(),
+        nextCheckDate: taskActionDraft.nextCheckDate || undefined,
+        blockerOutcome: taskActionDraft.blockerOutcome || undefined,
+        acceptanceCriteria: taskAction === "done" ? currentTask.acceptanceCriteria || currentTask.expectedResult : undefined
+      },
+      preview: actionPreview
+    };
     setConfirmation("saving");
     try {
       if (onConfirmTaskAction) {
-        await onConfirmTaskAction({ taskId: currentTask.id, intent: taskAction });
+        await onConfirmTaskAction(submission);
       } else {
-        await new Promise((resolve) => window.setTimeout(resolve, 450));
+        await saveTaskActionMock(submission);
       }
       setTaskAction(null);
+      setTaskActionDraft(emptyTaskActionDraft());
+      setAssistantReply("");
       setConfirmation("success");
     } catch {
       setConfirmation("idle");
@@ -364,7 +490,7 @@ function PersonalWorkspace({
         </section>
 
         <section className="task-stage" aria-label="Текущая задача">
-          <button className="task-nav-button is-previous" type="button" onClick={() => previousTask && onOpenTask(previousTask)} disabled={!previousTask} aria-label="Предыдущая задача" title={previousTask ? `${previousTask.id}: ${previousTask.title}` : "Других задач нет"}>
+          <button className="task-nav-button is-previous" type="button" onClick={() => previousTask && onFocusTask(previousTask.id)} disabled={!previousTask} aria-label="Предыдущая задача" title={previousTask ? `${previousTask.id}: ${previousTask.title}` : "Это первая задача в очереди"}>
             <ChevronLeft size={22} />
           </button>
 
@@ -394,6 +520,23 @@ function PersonalWorkspace({
                 <TaskActionButton icon={FilePlus2} label="Новый факт" active={taskAction === "fact"} disabled={confirmation === "saving"} onClick={() => selectTaskAction("fact")} />
                 <TaskActionButton icon={Check} label="Готово" active={taskAction === "done"} disabled={confirmation === "saving"} success onClick={() => selectTaskAction("done")} />
               </div>
+              {taskAction ? (
+                <TaskActionPopover
+                  intent={taskAction}
+                  draft={taskActionDraft}
+                  acceptanceCriteria={currentTask.acceptanceCriteria || currentTask.expectedResult}
+                  assistantReply={assistantReply}
+                  isRequestingHelp={isRequestingHelp}
+                  preview={actionPreview}
+                  onDraftChange={setTaskActionDraft}
+                  onRequestHelp={() => { void requestBlockerHelp(); }}
+                  onClose={closeTaskAction}
+                  onContinue={() => {
+                    closeTaskAction();
+                    onOpenTask(currentTask);
+                  }}
+                />
+              ) : null}
               <div className={`assistant-note ${confirmation === "success" ? "is-success" : ""}`} aria-live="polite">
                 {confirmation === "success" ? <Check size={19} /> : <Sparkles size={19} />}
                 <p>{actionNote}</p>
@@ -401,7 +544,7 @@ function PersonalWorkspace({
               <button
                 className={`confirm-task-action is-${confirmation}`}
                 type="button"
-                disabled={!taskAction || confirmation !== "idle"}
+                disabled={!actionPreview || confirmation !== "idle"}
                 onClick={() => { void confirmTaskAction(); }}
               >
                 {confirmation === "saving" ? <RefreshCw className="spin" size={17} /> : confirmation === "success" ? <Check size={17} /> : null}
@@ -410,13 +553,28 @@ function PersonalWorkspace({
             </aside>
           </article>
 
-          <button className="task-nav-button is-next" type="button" onClick={() => nextTask && onOpenTask(nextTask)} disabled={!nextTask} aria-label="Следующая задача" title={nextTask ? `${nextTask.id}: ${nextTask.title}` : "Других задач нет"}>
+          <button className="task-nav-button is-next" type="button" onClick={() => nextTask && onFocusTask(nextTask.id)} disabled={!nextTask} aria-label="Следующая задача" title={nextTask ? `${nextTask.id}: ${nextTask.title}` : "Это последняя доступная задача"}>
             <ChevronRight size={22} />
           </button>
         </section>
 
         <div className="task-position" aria-label="Положение задачи в очереди">
-          <span className="is-current"><i />Текущая</span><span><i />На паузе</span><span><i />Доступна</span>
+          {taskQueue.map((task, index) => {
+            const signal = localTaskSignals[task.id];
+            const paused = task.status === "WAITING_EXTERNAL" || signal === "waiting" || signal === "stuck";
+            return (
+              <button
+                key={task.id}
+                className={`${task.id === currentTask.id ? "is-current" : ""} ${paused ? "is-paused" : ""}`.trim()}
+                type="button"
+                onClick={() => onFocusTask(task.id)}
+                aria-label={`${task.id}: ${task.title}`}
+                title={`${index + 1} из ${taskQueue.length}: ${task.id} · ${paused ? "на паузе" : "доступна"}`}
+              >
+                <i /><span>{task.id === currentTask.id ? "Текущая" : paused ? "На паузе" : "Доступна"}</span>
+              </button>
+            );
+          })}
         </div>
 
         <button className="route-map" type="button" onClick={onOpenTree} aria-label="Открыть полное дерево задач">
@@ -681,6 +839,94 @@ function HandoffItem({ icon: Icon, label, accent }: { icon: IconComponent; label
   return <div className={accent ? "handoff-item is-accent" : "handoff-item"}><Icon size={22} /><span>{label}</span></div>;
 }
 
+function TaskActionPopover({
+  intent,
+  draft,
+  acceptanceCriteria,
+  assistantReply,
+  isRequestingHelp,
+  preview,
+  onDraftChange,
+  onRequestHelp,
+  onClose,
+  onContinue
+}: {
+  intent: TaskActionIntent;
+  draft: TaskActionDraft;
+  acceptanceCriteria: string;
+  assistantReply: string;
+  isRequestingHelp: boolean;
+  preview: string;
+  onDraftChange: (draft: TaskActionDraft) => void;
+  onRequestHelp: () => void;
+  onClose: () => void;
+  onContinue: () => void;
+}) {
+  const updateDraft = (patch: Partial<TaskActionDraft>) => onDraftChange({ ...draft, ...patch });
+
+  return (
+    <section className={`task-action-popover action-${intent}`} aria-label={`Действие: ${taskActionLabel(intent)}`}>
+      <header>
+        <div><small>Быстрое действие</small><strong>{taskActionLabel(intent)}</strong></div>
+        <button type="button" onClick={onClose} aria-label="Закрыть" title="Закрыть"><X size={16} /></button>
+      </header>
+
+      {intent === "stuck" ? (
+        <div className="action-popover-body">
+          <label>Что мешает продолжить?</label>
+          <textarea autoFocus rows={2} value={draft.note} onChange={(event) => {
+            updateDraft({ note: event.target.value, blockerOutcome: null });
+          }} placeholder="Одна конкретная помеха" />
+          <button className="popover-helper-button" type="button" disabled={!draft.note.trim() || isRequestingHelp} onClick={onRequestHelp}>
+            <Sparkles size={15} /><span>{isRequestingHelp ? "Ищу следующий шаг" : "Получить короткую подсказку"}</span>
+          </button>
+          {assistantReply ? (
+            <div className="popover-assistant-reply"><Sparkles size={15} /><p>{assistantReply}</p></div>
+          ) : null}
+          {assistantReply ? (
+            <div className="popover-choice-row" aria-label="Результат подсказки">
+              <button className={draft.blockerOutcome === "helped" ? "is-selected" : ""} type="button" onClick={() => updateDraft({ blockerOutcome: "helped" })}>Помогло</button>
+              <button className={draft.blockerOutcome === "blocked" ? "is-selected" : ""} type="button" onClick={() => updateDraft({ blockerOutcome: "blocked" })}>Всё ещё блокирует</button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {intent === "waiting" ? (
+        <div className="action-popover-body">
+          <label>Кого или что ждём?</label>
+          <textarea autoFocus rows={2} value={draft.note} onChange={(event) => updateDraft({ note: event.target.value })} placeholder="Например: ответ от СДЭК" />
+          <label className="popover-optional-label">Следующая проверка <span>необязательно</span></label>
+          <input type="date" value={draft.nextCheckDate} onChange={(event) => updateDraft({ nextCheckDate: event.target.value })} />
+        </div>
+      ) : null}
+
+      {intent === "fact" ? (
+        <div className="action-popover-body">
+          <label>Что изменилось?</label>
+          <textarea autoFocus rows={3} value={draft.note} onChange={(event) => updateDraft({ note: event.target.value })} placeholder="Один новый значимый факт" />
+        </div>
+      ) : null}
+
+      {intent === "done" ? (
+        <div className="action-popover-body">
+          <label>Критерий готовности</label>
+          <p className="popover-criteria"><Check size={15} />{acceptanceCriteria || "Результат задачи готов к передаче."}</p>
+          <div className="popover-choice-row is-confirmation" aria-label="Подтверждение готовности">
+            <button className={draft.doneConfirmed ? "is-selected" : ""} type="button" onClick={() => updateDraft({ doneConfirmed: true })}>Да, готово</button>
+            <button type="button" onClick={onContinue}>Нет, продолжить</button>
+          </div>
+        </div>
+      ) : null}
+
+      <div className={`task-action-preview ${preview ? "is-ready" : ""}`} aria-live="polite">
+        <small>Будет зафиксировано</small>
+        <p>{preview || previewHint(intent)}</p>
+      </div>
+    </section>
+  );
+}
+
 function TaskActionButton({
   icon: Icon,
   label,
@@ -801,6 +1047,30 @@ function taskActionLabel(action: TaskActionIntent) {
   if (action === "waiting") return "Жду";
   if (action === "fact") return "Новый факт";
   return "Готово";
+}
+
+function buildTaskActionPreview(action: TaskActionIntent | null, draft: TaskActionDraft, task: Task) {
+  const note = draft.note.trim();
+  if (!action) return "";
+  if (action === "stuck") {
+    if (!note || !draft.blockerOutcome) return "";
+    return `Блокер: ${note}. ${draft.blockerOutcome === "helped" ? "Подсказка помогла" : "Всё ещё блокирует"}.`;
+  }
+  if (action === "waiting") {
+    if (!note) return "";
+    const nextCheck = draft.nextCheckDate ? ` Следующая проверка: ${formatDate(draft.nextCheckDate)}.` : "";
+    return `Ожидание: ${note}.${nextCheck}`;
+  }
+  if (action === "fact") return note ? `Новый факт: ${note}.` : "";
+  if (!draft.doneConfirmed) return "";
+  return `Готово: критерий задачи «${task.acceptanceCriteria || task.expectedResult}» подтверждён.`;
+}
+
+function previewHint(action: TaskActionIntent) {
+  if (action === "stuck") return "Опишите помеху, получите подсказку и отметьте результат.";
+  if (action === "waiting") return "Укажите, кого или что ждём.";
+  if (action === "fact") return "Коротко укажите новый факт.";
+  return "Подтвердите соответствие критерию готовности.";
 }
 
 function taskWord(count: number) {
