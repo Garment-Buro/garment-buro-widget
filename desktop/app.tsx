@@ -119,7 +119,7 @@ export function DesktopApp() {
         >
           <Minimize2 size={18} />
         </button>
-        <DashboardClient initialState={state} loadState={loadState} />
+        <DashboardClient initialState={state} loadState={loadState} onExit={collapseDashboard} />
       </div>
     );
   }

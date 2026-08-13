@@ -8,9 +8,12 @@ import {
   CalendarDays,
   Check,
   ChevronLeft,
-  CircleDot,
+  ChevronRight,
+  CircleHelp,
   Clock3,
+  Cloud,
   FileText,
+  FilePlus2,
   Filter,
   Flag,
   Focus,
@@ -19,12 +22,15 @@ import {
   Link2,
   ListChecks,
   LockKeyhole,
+  LogOut,
   Maximize2,
   Minus,
+  Play,
   RefreshCw,
   Search,
   Settings,
   Shirt,
+  Sparkles,
   Star,
   Target,
   Truck,
@@ -37,7 +43,7 @@ import {
   type LucideIcon
 } from "lucide-react";
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { formatDate } from "@/lib/date";
 import { rewardTierForPercent } from "@/lib/reward-tier";
 import type { DashboardState, Person, ProgressGate, Task } from "@/lib/types";
@@ -102,10 +108,12 @@ const laneDefinitions: LaneDefinition[] = [
 
 export function DashboardClient({
   initialState,
-  loadState
+  loadState,
+  onExit
 }: {
   initialState: DashboardState;
   loadState?: () => Promise<DashboardState>;
+  onExit?: () => void;
 }) {
   const [state, setState] = useState(initialState);
   const [view, setView] = useState<WorkspaceView>("personal");
@@ -186,6 +194,7 @@ export function DashboardClient({
           onRefresh={refresh}
           onOpenTree={() => setView("tree")}
           onOpenTask={setSelectedTask}
+          onExit={onExit || (() => window.location.assign("/widget"))}
         />
       ) : (
         <TaskTree
@@ -216,7 +225,6 @@ function PersonalWorkspace({
   state,
   person,
   currentTask,
-  downstream,
   directUnlocks,
   fallbackTask,
   waitingTask,
@@ -226,7 +234,8 @@ function PersonalWorkspace({
   isRefreshing,
   onRefresh,
   onOpenTree,
-  onOpenTask
+  onOpenTask,
+  onExit
 }: {
   state: DashboardState;
   person: Person;
@@ -242,16 +251,30 @@ function PersonalWorkspace({
   onRefresh: () => void;
   onOpenTree: () => void;
   onOpenTask: (task: Task) => void;
+  onExit: () => void;
 }) {
+  const [taskAction, setTaskAction] = useState<"stuck" | "waiting" | "fact" | "done" | null>(null);
   const goal = state.goal;
   const waitingOwners = unique(directUnlocks.map((task) => task.owner).filter((owner) => owner && owner !== person.name));
-  const unlockLabel = directUnlocks.length === 1 ? "1 задачу" : `${directUnlocks.length} задачи`;
-  const waitingLabel = directUnlocks.length === 1 ? "1 задача ждёт результата" : `${directUnlocks.length} задачи ждут результата`;
-  const expected = currentTask.expectedResult || currentTask.acceptanceCriteria;
   const handoffLabel = currentTask.deadline ? `Срок ${shortDate(currentTask.deadline)}` : "Срок не задан";
   const taskImpact = state.progress.taskPotentialPercent;
   const afterTaskProgress = state.progress.afterTaskPercent;
   const trackerTier = rewardTierForPercent(taskImpact);
+  const taskContext = state.taskContexts.find((context) => context.taskId === currentTask.id);
+  const relatedIssue = state.issues.find((issue) => issue.relatedTask === currentTask.id);
+  const ownedTasks = state.tasks.filter((task) => task.owner === person.name && !completedStatuses.has(task.status));
+  const currentIndex = Math.max(0, ownedTasks.findIndex((task) => task.id === currentTask.id));
+  const previousTask = ownedTasks.length > 1 ? ownedTasks[(currentIndex - 1 + ownedTasks.length) % ownedTasks.length] : undefined;
+  const nextTask = ownedTasks.length > 1 ? ownedTasks[(currentIndex + 1) % ownedTasks.length] : undefined;
+  const incoming = state.dependencies.blockedBy.slice(0, 2);
+  const outgoingTasks = directUnlocks.slice(0, 2);
+  const outgoingGates = state.dependencies.unlocksGates.slice(0, Math.max(0, 2 - outgoingTasks.length));
+  const eventTask = waitingTask || currentTask;
+  const eventDate = eventTask.nextCheckDate || eventTask.deadline;
+  const nextAction = relatedIssue?.nextAction || taskContext?.handoffResult || currentTask.expectedResult;
+  const actionNote = taskAction
+    ? `Режим «${taskActionLabel(taskAction)}» выбран локально. Фактический статус изменится после фиксации в Google Drive.`
+    : "GPT-помощник подключается, когда он действительно нужен.";
 
   return (
     <main className="personal-page">
@@ -264,122 +287,126 @@ function PersonalWorkspace({
         <PersonArtwork person={person} variant="full" />
         <div className="identity-stats">
           <MetaRow icon={Clock3} label={handoffLabel} />
-          <MetaRow icon={Focus} label="Project focus" />
-          <MetaRow icon={Layers3} label={`Спринт ${sprint} / 3`} />
+          <MetaRow icon={Focus} label="Project Focus" note={currentTask.direction || currentTask.title} />
+          <MetaRow icon={Layers3} label={`Спринт ${sprint} / 3`} note={`${formatPercent(projectProgress)}% · +${formatPercent(taskImpact)}%`} accent />
         </div>
+        <button className="identity-exit" type="button" onClick={onExit}><LogOut size={19} /><span>Выйти</span></button>
       </aside>
 
-      <section className="turn-column">
+      <section className="workspace-main">
         <header className="turn-header">
           <div>
             <p className="screen-kicker">Личное рабочее пространство</p>
             <h1>Сейчас ваш ход</h1>
           </div>
           <div className="live-controls">
-            <span className={`live-state ${sourceTone !== "LIVE" ? "is-warning" : ""}`}>
-              <i /> {sourceTone}
-            </span>
+            <span className={`live-state ${sourceTone !== "LIVE" ? "is-warning" : ""}`}><i /> {sourceTone}</span>
             <button className="icon-button" onClick={onRefresh} disabled={isRefreshing} aria-label="Обновить данные" title="Обновить данные">
               <RefreshCw size={17} className={isRefreshing ? "spin" : ""} />
             </button>
           </div>
         </header>
 
-        <section className="handoff-panel" aria-label="Эстафета задачи">
-          <p className="panel-eyebrow">Эстафета у вас</p>
+        <section className="workspace-status-bar" aria-label="Статус текущей задачи">
           <div className="handoff-grid">
-            <HandoffItem icon={CircleDot} label={currentTask.launchCritical ? "Критический ход" : statusLabel(currentTask.status)} accent={currentTask.launchCritical} />
-            <HandoffItem
-              icon={UsersRound}
-              label={waitingOwners.length ? `${waitingOwners.length} чел. ждут результата` : waitingLabel}
-            />
-            <HandoffItem icon={Link2} label={`Открывает ${unlockLabel}`} />
+            <HandoffItem icon={AlertTriangle} label={currentTask.launchCritical ? "Критический ход" : statusLabel(currentTask.status)} />
+            <HandoffItem icon={UsersRound} label={waitingOwners.length ? `Ждут ${waitingOwners.length} человека` : "Никто не ждёт"} />
+            <HandoffItem icon={Link2} label={`Открывает ${directUnlocks.length} ${taskWord(directUnlocks.length)}`} />
             <HandoffItem icon={Clock3} label={handoffLabel} />
           </div>
         </section>
 
-        <p className="unlock-summary">
-          После этого откроется {downstream.length ? downstream.slice(0, 3).map((task) => task.id).join(" → ") : "следующий этап"}
-        </p>
+        <section className="task-stage" aria-label="Текущая задача">
+          <button className="task-nav-button is-previous" type="button" onClick={() => previousTask && onOpenTask(previousTask)} disabled={!previousTask} aria-label="Предыдущая задача" title={previousTask ? `${previousTask.id}: ${previousTask.title}` : "Других задач нет"}>
+            <ChevronLeft size={22} />
+          </button>
 
-        <button className="current-focus-card" onClick={() => onOpenTask(currentTask)}>
-          <div className="focus-copy">
-            <p className="panel-eyebrow">Текущий фокус</p>
-            <h2>{currentTask.id} — {currentTask.title}</h2>
-            <p className="waiting-copy">
-              {currentTask.waitingFor ? `Ждём: ${currentTask.waitingFor}` : `Следующий результат ждёт цепочка ${downstream.slice(0, 2).map((task) => task.id).join(" → ") || "проекта"}`}
-            </p>
-            <div className="delivery-copy">
-              <strong>Что нужно выдать:</strong>
-              <span>{expected || "Зафиксированный результат и понятный следующий шаг."}</span>
+          <article className="work-task-card">
+            <div className="work-task-copy">
+              <span className="task-id-chip">{currentTask.id}</span>
+              <h2>{currentTask.title}</h2>
+              <div className="task-detail-block">
+                <strong>Почему сейчас</strong>
+                <p>{currentTask.whyNow || "Задача находится в текущем фокусе проекта."}</p>
+              </div>
+              <div className="task-detail-block is-ready">
+                <strong>Что считается готовым</strong>
+                <p><Check size={15} />{currentTask.acceptanceCriteria || currentTask.expectedResult}</p>
+              </div>
+              <div className="task-detail-block is-next">
+                <strong>Next action</strong>
+                <p>{nextAction || "Зафиксировать результат и передать его следующему участнику процесса."}</p>
+              </div>
             </div>
-          </div>
-          <div className="focus-tags">
-            <StatusBadge task={currentTask} allTasks={state.tasks} prominent />
-            {currentTask.projectFocus ? <span className="outline-tag">Project focus</span> : null}
-            <span className="outline-tag accent">{handoffLabel}</span>
-          </div>
-        </button>
 
-        <button className="sprint-map" onClick={onOpenTree} aria-label="Открыть полное дерево задач">
-          <div className="sprint-map-head">
-            <span>Спринт {sprint} — in progress</span>
-            <span>Нажмите, чтобы открыть полное дерево <ArrowRight size={16} /></span>
+            <aside className="task-action-panel">
+              <button className="primary-task-action" type="button" onClick={() => onOpenTask(currentTask)}><Play size={22} /><span>{currentTask.status === "IN_PROGRESS" ? "Продолжить" : "Начать"}</span></button>
+              <div className="task-action-grid">
+                <TaskActionButton icon={CircleHelp} label="Застрял" active={taskAction === "stuck"} onClick={() => setTaskAction("stuck")} />
+                <TaskActionButton icon={Clock3} label="Жду" active={taskAction === "waiting"} onClick={() => setTaskAction("waiting")} />
+                <TaskActionButton icon={FilePlus2} label="Новый факт" active={taskAction === "fact"} onClick={() => setTaskAction("fact")} />
+                <TaskActionButton icon={Check} label="Готово" active={taskAction === "done"} success onClick={() => setTaskAction("done")} />
+              </div>
+              <div className="assistant-note"><Sparkles size={19} /><p>{actionNote}</p></div>
+            </aside>
+          </article>
+
+          <button className="task-nav-button is-next" type="button" onClick={() => nextTask && onOpenTask(nextTask)} disabled={!nextTask} aria-label="Следующая задача" title={nextTask ? `${nextTask.id}: ${nextTask.title}` : "Других задач нет"}>
+            <ChevronRight size={22} />
+          </button>
+        </section>
+
+        <div className="task-position" aria-label="Положение задачи в очереди">
+          <span className="is-current"><i />Текущая</span><span><i />На паузе</span><span><i />Доступна</span>
+        </div>
+
+        <button className="route-map" type="button" onClick={onOpenTree} aria-label="Открыть полное дерево задач">
+          <div className="route-map-head">
+            <strong>Миникарта пути до цели</strong><span title="Показаны только фактические связи задачи"><CircleHelp size={14} /></span><small>Открыть всё дерево <ArrowRight size={14} /></small>
           </div>
-          <div className="mini-route">
-            <MiniMilestone icon={Check} label="Спринт 1" note="Done" done />
-            <span className="route-arrow">→</span>
-            <MiniTask task={currentTask} active />
-            {directUnlocks[0] ? (
-              <>
-                <span className="route-arrow">→</span>
-                <MiniTask task={directUnlocks[0]} />
-              </>
-            ) : null}
-            <span className="route-arrow">→</span>
-            <MiniMilestone icon={Flag} label="Спринт 3" note="Next" />
+          <div className="route-flow">
+            <RouteColumn label="Зависит от" side="incoming">
+              {incoming.length ? incoming.map((task) => <RouteNode key={task.id} id={task.id} title={task.title} done={completedStatuses.has(task.status)} />) : <RouteNode id="—" title="Нет входящих зависимостей" muted />}
+            </RouteColumn>
+            <div className="route-current"><small>Текущий ход</small><RouteNode id={currentTask.id} title={currentTask.title} current /></div>
+            <RouteColumn label="Откроет" side="outgoing">
+              {outgoingTasks.map((task) => <RouteNode key={task.id} id={task.id} title={task.title} />)}
+              {outgoingGates.map((gate) => <RouteNode key={gate.id} id={gate.id} title={gate.title} />)}
+              {!outgoingTasks.length && !outgoingGates.length ? <RouteNode id="—" title="Следующий этап не зафиксирован" muted /> : null}
+            </RouteColumn>
+            <div className="route-goal"><small>Ведёт к цели</small><div><Flag size={22} /><span><small>{goal?.id || "GOAL"}</small><strong>{goal?.title || "MVP"}</strong><em>Готовность к запуску</em></span></div></div>
           </div>
-          <span className="sprint-map-progress"><i style={{ width: `${projectProgress}%` }} /></span>
         </button>
       </section>
 
-      <aside className="progress-column">
-        <section className={`progress-panel sprint-tracker tracker-tier-${trackerTier}`}>
-          <p className="sprint-tracker-title">Трекер спринта</p>
+      <aside className="workspace-rail">
+        <section className={`workspace-progress-card sprint-tracker tracker-tier-${trackerTier}`}>
+          <p className="sprint-tracker-title">Прогресс проекта</p>
           <ProgressGauge value={projectProgress} projectedValue={afterTaskProgress} contribution={taskImpact} />
-          <p className="progress-sprint">Спринт {sprint} из 3</p>
-          <p className="progress-caption">до цели MVP</p>
-          <span className="progress-rule" />
-          <p className="progress-result">Вклад текущей задачи</p>
-          <p className="progress-reward">
-            <b>+{formatPercent(taskImpact)}%</b>
-            <span>после верификации будет {formatPercent(afterTaskProgress)}%</span>
-          </p>
+          <p className="progress-explainer">* Потенциальный вклад после фиксации результата. Данные из Google Drive.</p>
         </section>
 
-        <section className="info-card">
-          <div className="info-icon"><LockKeyhole size={24} /></div>
-          <div>
-            <h3>Что откроется после этого</h3>
-            {downstream.slice(0, 3).map((task) => (
-              <button key={task.id} onClick={() => onOpenTask(task)}>
-                {task.id} — {task.title}
-              </button>
-            ))}
-            {!downstream.length ? <p>Финальная точка этой ветки.</p> : null}
-          </div>
+        <section className="workspace-side-card event-card">
+          <div className="side-card-icon"><CalendarDays size={23} /></div>
+          <div><h3>Ближайшее событие</h3><p>{eventTask.id} · контрольная проверка</p><span>{formatDate(eventDate)}</span><button type="button" onClick={() => onOpenTask(eventTask)}>Открыть задачу</button></div>
         </section>
 
-        <section className="info-card blocked-help">
-          <div className="info-icon"><Clock3 size={24} /></div>
+        <section className="workspace-side-card blocked-card">
+          <div className="side-card-icon"><Clock3 size={23} /></div>
           <div>
-            <h3>Если упёрлись</h3>
-            <p>{waitingTask?.waitingFor ? `Ждём: ${waitingTask.waitingFor}` : "Зафиксируйте блокер в исходной таблице."}</p>
-            <p>{fallbackTask ? `Пока ждём: ${fallbackTask.id} — ${fallbackTask.title}` : "Возьмите следующую доступную задачу."}</p>
-            <span>Next check: {shortDate(waitingTask?.nextCheckDate || currentTask.nextCheckDate)}</span>
+            <h3>Если упрёшься</h3>
+            <p>{waitingTask?.waitingFor ? `Ждём: ${waitingTask.waitingFor}` : relatedIssue?.openQuestion || "Зафиксируй блокер и следующий проверяемый шаг."}</p>
+            <span>Следующая проверка: {shortDate(waitingTask?.nextCheckDate || currentTask.nextCheckDate || currentTask.deadline)}</span>
+            <button type="button" onClick={() => fallbackTask ? onOpenTask(fallbackTask) : setTaskAction("stuck")}>{fallbackTask ? `Открыть ${fallbackTask.id}` : "Зафиксировать блокер"}</button>
           </div>
         </section>
       </aside>
+
+      <footer className="workspace-footer">
+        <span><Cloud size={16} />Последняя фиксация: {updatedTime(state.updatedAt)}</span><i /><span>Данные из Google Drive</span>
+        <button type="button" onClick={onRefresh} disabled={isRefreshing}><RefreshCw size={15} className={isRefreshing ? "spin" : ""} />Обновить</button>
+        <small>{sourceTone === "LIVE" ? "Данные актуальны" : sourceTone}</small>
+      </footer>
     </main>
   );
 }
@@ -572,12 +599,79 @@ function PersonArtwork({ person, variant }: { person: Person; variant: "full" | 
   );
 }
 
-function MetaRow({ icon: Icon, label }: { icon: IconComponent; label: string }) {
-  return <div className="meta-row"><Icon size={26} strokeWidth={1.4} /><span>{label}</span></div>;
+function MetaRow({
+  icon: Icon,
+  label,
+  note,
+  accent
+}: {
+  icon: IconComponent;
+  label: string;
+  note?: string;
+  accent?: boolean;
+}) {
+  return (
+    <div className={accent ? "meta-row is-accent" : "meta-row"}>
+      <Icon size={22} strokeWidth={1.5} />
+      <span><strong>{label}</strong>{note ? <small>{note}</small> : null}</span>
+    </div>
+  );
 }
 
 function HandoffItem({ icon: Icon, label, accent }: { icon: IconComponent; label: string; accent?: boolean }) {
   return <div className={accent ? "handoff-item is-accent" : "handoff-item"}><Icon size={22} /><span>{label}</span></div>;
+}
+
+function TaskActionButton({
+  icon: Icon,
+  label,
+  active,
+  success,
+  onClick
+}: {
+  icon: IconComponent;
+  label: string;
+  active?: boolean;
+  success?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`${active ? "is-active" : ""} ${success ? "is-success" : ""}`.trim()}
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+    >
+      <Icon size={18} />
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function RouteColumn({ label, side, children }: { label: string; side: "incoming" | "outgoing"; children: ReactNode }) {
+  return <div className={`route-column route-${side}`}><small>{label}</small><div>{children}</div></div>;
+}
+
+function RouteNode({
+  id,
+  title,
+  done,
+  current,
+  muted
+}: {
+  id: string;
+  title: string;
+  done?: boolean;
+  current?: boolean;
+  muted?: boolean;
+}) {
+  return (
+    <div className={`route-node ${done ? "is-done" : ""} ${current ? "is-current" : ""} ${muted ? "is-muted" : ""}`.trim()}>
+      <span>{id}</span>
+      <strong>{title}</strong>
+      {done ? <Check size={15} /> : null}
+    </div>
+  );
 }
 
 function MiniMilestone({ icon: Icon, label, note, done }: { icon: IconComponent; label: string; note: string; done?: boolean }) {
@@ -619,12 +713,12 @@ function ProgressGauge({
       } as CSSProperties}
     >
       <div>
-        <span className="progress-gauge-label">Сейчас</span>
+        <span className="progress-gauge-label">Готовность</span>
         <strong>{formatPercent(value)}<span>%</span></strong>
         {contribution > 0 ? (
           <span className="progress-gauge-future">
             <b>+{formatPercent(contribution)}%</b>
-            <small>за задачу</small>
+            <small>ваш вклад</small>
           </span>
         ) : null}
       </div>
@@ -638,6 +732,28 @@ function clampPercent(value: number) {
 
 function formatPercent(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(".", ",");
+}
+
+function taskActionLabel(action: "stuck" | "waiting" | "fact" | "done") {
+  if (action === "stuck") return "Застрял";
+  if (action === "waiting") return "Жду";
+  if (action === "fact") return "Новый факт";
+  return "Готово";
+}
+
+function taskWord(count: number) {
+  const lastTwo = count % 100;
+  if (lastTwo >= 11 && lastTwo <= 14) return "задач";
+  const last = count % 10;
+  if (last === 1) return "задачу";
+  if (last >= 2 && last <= 4) return "задачи";
+  return "задач";
+}
+
+function updatedTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value || "—";
+  return new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
 function NavItem({ icon: Icon, label, active }: { icon: IconComponent; label: string; active?: boolean }) {
