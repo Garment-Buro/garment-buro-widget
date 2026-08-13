@@ -59,6 +59,13 @@ const personAssets: Partial<Record<string, { full: string; avatar: string }>> = 
 
 type WorkspaceView = "personal" | "tree";
 type IconComponent = LucideIcon;
+type TaskActionIntent = "stuck" | "waiting" | "fact" | "done";
+type TaskActionConfirmation = "idle" | "saving" | "success";
+
+export type TaskActionSubmission = {
+  taskId: string;
+  intent: TaskActionIntent;
+};
 
 type LaneDefinition = {
   id: string;
@@ -109,11 +116,13 @@ const laneDefinitions: LaneDefinition[] = [
 export function DashboardClient({
   initialState,
   loadState,
-  onExit
+  onExit,
+  onConfirmTaskAction
 }: {
   initialState: DashboardState;
   loadState?: () => Promise<DashboardState>;
   onExit?: () => void;
+  onConfirmTaskAction?: (submission: TaskActionSubmission) => Promise<void>;
 }) {
   const [state, setState] = useState(initialState);
   const [view, setView] = useState<WorkspaceView>("personal");
@@ -195,6 +204,7 @@ export function DashboardClient({
           onOpenTree={() => setView("tree")}
           onOpenTask={setSelectedTask}
           onExit={onExit || (() => window.location.assign("/widget"))}
+          onConfirmTaskAction={onConfirmTaskAction}
         />
       ) : (
         <TaskTree
@@ -235,7 +245,8 @@ function PersonalWorkspace({
   onRefresh,
   onOpenTree,
   onOpenTask,
-  onExit
+  onExit,
+  onConfirmTaskAction
 }: {
   state: DashboardState;
   person: Person;
@@ -252,8 +263,10 @@ function PersonalWorkspace({
   onOpenTree: () => void;
   onOpenTask: (task: Task) => void;
   onExit: () => void;
+  onConfirmTaskAction?: (submission: TaskActionSubmission) => Promise<void>;
 }) {
-  const [taskAction, setTaskAction] = useState<"stuck" | "waiting" | "fact" | "done" | null>(null);
+  const [taskAction, setTaskAction] = useState<TaskActionIntent | null>(null);
+  const [confirmation, setConfirmation] = useState<TaskActionConfirmation>("idle");
   const goal = state.goal;
   const waitingOwners = unique(directUnlocks.map((task) => task.owner).filter((owner) => owner && owner !== person.name));
   const handoffLabel = currentTask.deadline ? `Срок ${shortDate(currentTask.deadline)}` : "Срок не задан";
@@ -272,9 +285,43 @@ function PersonalWorkspace({
   const eventTask = waitingTask || currentTask;
   const eventDate = eventTask.nextCheckDate || eventTask.deadline;
   const nextAction = relatedIssue?.nextAction || taskContext?.handoffResult || currentTask.expectedResult;
-  const actionNote = taskAction
-    ? `Режим «${taskActionLabel(taskAction)}» выбран локально. Фактический статус изменится после фиксации в Google Drive.`
-    : "GPT-помощник подключается, когда он действительно нужен.";
+  const actionNote = confirmation === "saving"
+    ? "Фиксируем выбранное состояние задачи."
+    : confirmation === "success"
+      ? onConfirmTaskAction
+        ? "Состояние зафиксировано в системе."
+        : "Выбор подтверждён локально. Запись в Google Drive подключим следующим этапом."
+      : taskAction
+        ? `Выбрано: «${taskActionLabel(taskAction)}». Подтвердите фиксацию следующим шагом.`
+        : "Выберите быстрое действие, если состояние задачи изменилось.";
+
+  useEffect(() => {
+    if (confirmation !== "success") return;
+    const timer = window.setTimeout(() => setConfirmation("idle"), 1_800);
+    return () => window.clearTimeout(timer);
+  }, [confirmation]);
+
+  function selectTaskAction(intent: TaskActionIntent) {
+    if (confirmation === "saving") return;
+    setTaskAction(intent);
+    setConfirmation("idle");
+  }
+
+  async function confirmTaskAction() {
+    if (!taskAction || confirmation === "saving") return;
+    setConfirmation("saving");
+    try {
+      if (onConfirmTaskAction) {
+        await onConfirmTaskAction({ taskId: currentTask.id, intent: taskAction });
+      } else {
+        await new Promise((resolve) => window.setTimeout(resolve, 450));
+      }
+      setTaskAction(null);
+      setConfirmation("success");
+    } catch {
+      setConfirmation("idle");
+    }
+  }
 
   return (
     <main className="personal-page">
@@ -342,12 +389,24 @@ function PersonalWorkspace({
             <aside className="task-action-panel">
               <button className="primary-task-action" type="button" onClick={() => onOpenTask(currentTask)}><Play size={22} /><span>{currentTask.status === "IN_PROGRESS" ? "Продолжить" : "Начать"}</span></button>
               <div className="task-action-grid">
-                <TaskActionButton icon={CircleHelp} label="Застрял" active={taskAction === "stuck"} onClick={() => setTaskAction("stuck")} />
-                <TaskActionButton icon={Clock3} label="Жду" active={taskAction === "waiting"} onClick={() => setTaskAction("waiting")} />
-                <TaskActionButton icon={FilePlus2} label="Новый факт" active={taskAction === "fact"} onClick={() => setTaskAction("fact")} />
-                <TaskActionButton icon={Check} label="Готово" active={taskAction === "done"} success onClick={() => setTaskAction("done")} />
+                <TaskActionButton icon={CircleHelp} label="Застрял" active={taskAction === "stuck"} disabled={confirmation === "saving"} onClick={() => selectTaskAction("stuck")} />
+                <TaskActionButton icon={Clock3} label="Жду" active={taskAction === "waiting"} disabled={confirmation === "saving"} onClick={() => selectTaskAction("waiting")} />
+                <TaskActionButton icon={FilePlus2} label="Новый факт" active={taskAction === "fact"} disabled={confirmation === "saving"} onClick={() => selectTaskAction("fact")} />
+                <TaskActionButton icon={Check} label="Готово" active={taskAction === "done"} disabled={confirmation === "saving"} success onClick={() => selectTaskAction("done")} />
               </div>
-              <div className="assistant-note"><Sparkles size={19} /><p>{actionNote}</p></div>
+              <div className={`assistant-note ${confirmation === "success" ? "is-success" : ""}`} aria-live="polite">
+                {confirmation === "success" ? <Check size={19} /> : <Sparkles size={19} />}
+                <p>{actionNote}</p>
+              </div>
+              <button
+                className={`confirm-task-action is-${confirmation}`}
+                type="button"
+                disabled={!taskAction || confirmation !== "idle"}
+                onClick={() => { void confirmTaskAction(); }}
+              >
+                {confirmation === "saving" ? <RefreshCw className="spin" size={17} /> : confirmation === "success" ? <Check size={17} /> : null}
+                <span>{confirmation === "saving" ? "Фиксируем" : confirmation === "success" ? onConfirmTaskAction ? "Зафиксировано" : "Подтверждено" : "Зафиксировать"}</span>
+              </button>
             </aside>
           </article>
 
@@ -626,12 +685,14 @@ function TaskActionButton({
   icon: Icon,
   label,
   active,
+  disabled,
   success,
   onClick
 }: {
   icon: IconComponent;
   label: string;
   active?: boolean;
+  disabled?: boolean;
   success?: boolean;
   onClick: () => void;
 }) {
@@ -640,6 +701,7 @@ function TaskActionButton({
       className={`${active ? "is-active" : ""} ${success ? "is-success" : ""}`.trim()}
       type="button"
       aria-pressed={active}
+      disabled={disabled}
       onClick={onClick}
     >
       <Icon size={18} />
@@ -734,7 +796,7 @@ function formatPercent(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(".", ",");
 }
 
-function taskActionLabel(action: "stuck" | "waiting" | "fact" | "done") {
+function taskActionLabel(action: TaskActionIntent) {
   if (action === "stuck") return "Застрял";
   if (action === "waiting") return "Жду";
   if (action === "fact") return "Новый факт";
