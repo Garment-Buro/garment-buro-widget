@@ -9,6 +9,7 @@ const intents = new Set<TaskCommandIntent>([
   "reject",
   "stuck",
   "waiting",
+  "fact",
   "done",
   "session_start",
   "session_close"
@@ -29,7 +30,7 @@ export async function POST(request: Request) {
     if (!taskId || !commandId || !intents.has(intent)) {
       return NextResponse.json({ error: "Некорректная команда задачи." }, { status: 400 });
     }
-    if (["reject", "stuck", "waiting", "done", "session_close"].includes(intent) && !note) {
+    if (["reject", "stuck", "waiting", "fact", "done", "session_close"].includes(intent) && !note) {
       return NextResponse.json({ error: "Добавьте короткий комментарий для GPT." }, { status: 400 });
     }
     if (note.length > 4_000) {

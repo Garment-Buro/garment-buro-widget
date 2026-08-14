@@ -2,7 +2,7 @@ import { buildTaskAssistantClientContext } from "@/lib/ai/client-context";
 import type { TaskAssistantMode, TaskAssistantRequest, TaskAssistantResponse } from "@/lib/ai/types";
 import type { DashboardState } from "@/lib/types";
 
-export type TaskActionIntent = "reject" | "stuck" | "waiting" | "done" | "session_close";
+export type TaskActionIntent = "reject" | "stuck" | "waiting" | "fact" | "done" | "session_close";
 export type TaskCommandIntent = "accept" | "session_start" | TaskActionIntent;
 
 export type TaskActionDetails = {

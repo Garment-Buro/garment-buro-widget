@@ -137,6 +137,7 @@ function askGptForTaskPlan_(request, task, spreadsheet) {
     "Верни только structured plan. Не утверждай запись до verification read.",
     "Начать всегда означает IN_PROGRESS и START_PLAN.",
     "Застрял означает BLOCKED; Жду означает WAITING_EXTERNAL.",
+    "Новый факт означает NEW_FACT: зафиксируй факт в TASK_UPDATES и не меняй статус задачи.",
     "Готово: проверь комментарий и acceptance. Используй DONE только если результат действительно принят правилами; иначе REVIEW или IN_PROGRESS.",
     "Отклонить не означает CANCELLED автоматически: сохрани объяснение и не меняй OWNER/PRIORITY/DEADLINE без разрешённого решения.",
     "Допустимые статусы: " + GB_TASK_STATUSES_.join(", ") + "."
@@ -220,6 +221,10 @@ function validateTaskPlan_(request, task, plan) {
   if (forcedStatuses[request.intent]) plan.targetStatus = forcedStatuses[request.intent];
   if (request.intent === "accept") plan.updateType = "START_PLAN";
   if (request.intent === "stuck") plan.updateType = "BLOCKER";
+  if (request.intent === "fact") {
+    plan.targetStatus = "UNCHANGED";
+    plan.updateType = "NEW_FACT";
+  }
   if (request.intent === "done") plan.updateType = "COMPLETION";
   if (request.intent === "reject" && plan.targetStatus === "CANCELLED") plan.targetStatus = "UNCHANGED";
   if (plan.requiresApproval && ["DONE", "CANCELLED"].indexOf(plan.targetStatus) >= 0) plan.targetStatus = "REVIEW";

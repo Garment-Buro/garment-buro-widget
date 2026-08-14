@@ -209,10 +209,17 @@ test("17. browser code never reads OPENAI_API_KEY", async () => {
 test("17a. task actions use the GPT write command instead of a local mock", async () => {
   const serviceCode = await readFile(new URL("../lib/services/task-action-service.ts", import.meta.url), "utf8");
   const dashboardCode = await readFile(new URL("../components/dashboard-client.tsx", import.meta.url), "utf8");
+  const routeCode = await readFile(new URL("../app/api/task-command/route.ts", import.meta.url), "utf8");
+  const gatewayCode = await readFile(new URL("../apps-script/task-commands.gs", import.meta.url), "utf8");
   assert.match(serviceCode, /task-command/);
   assert.doesNotMatch(serviceCode, /saveTaskActionMock|mock-/);
   assert.doesNotMatch(dashboardCode, /localTaskSignals|saveTaskActionMock/);
   assert.match(dashboardCode, /Отправить в GPT/);
+  assert.match(dashboardCode, /label="Новый факт"/);
+  assert.match(routeCode, /"fact"/);
+  assert.match(gatewayCode, /request\.intent === "fact"/);
+  assert.match(gatewayCode, /plan\.updateType = "NEW_FACT"/);
+  assert.match(gatewayCode, /plan\.targetStatus = "UNCHANGED"/);
 });
 
 test("17b. Apps Script recovers partial writes before marking a session SYNCED", async () => {

@@ -13,6 +13,7 @@ import {
   CircleHelp,
   Clock3,
   Cloud,
+  FilePlus2,
   FileText,
   Filter,
   Flag,
@@ -602,7 +603,11 @@ function PersonalWorkspace({
               ) : null}
 
               <div className="task-action-grid">
-                <TaskActionButton icon={Ban} label="Отклонить" active={taskAction === "reject"} disabled={confirmation === "saving"} onClick={() => selectTaskAction("reject")} />
+                {canAcceptTask ? (
+                  <TaskActionButton icon={Ban} label="Отклонить" active={taskAction === "reject"} disabled={confirmation === "saving"} onClick={() => selectTaskAction("reject")} />
+                ) : (
+                  <TaskActionButton icon={FilePlus2} label="Новый факт" active={taskAction === "fact"} disabled={confirmation === "saving"} onClick={() => selectTaskAction("fact")} />
+                )}
                 <TaskActionButton icon={CircleHelp} label="Застрял" active={taskAction === "stuck"} disabled={confirmation === "saving"} onClick={() => selectTaskAction("stuck")} />
                 <TaskActionButton icon={Clock3} label="Жду" active={taskAction === "waiting"} disabled={confirmation === "saving"} onClick={() => selectTaskAction("waiting")} />
                 <TaskActionButton icon={Check} label="Готово" active={taskAction === "done"} disabled={confirmation === "saving"} success onClick={() => selectTaskAction("done")} />
@@ -1021,6 +1026,13 @@ function TaskActionPopover({
         </div>
       ) : null}
 
+      {intent === "fact" ? (
+        <div className="action-popover-body">
+          <label>Что изменилось?</label>
+          <textarea autoFocus rows={3} value={draft.note} onChange={(event) => updateDraft({ note: event.target.value })} placeholder="Один новый значимый факт" />
+        </div>
+      ) : null}
+
       {intent === "done" ? (
         <div className="action-popover-body">
           <label>Критерий готовности</label>
@@ -1164,6 +1176,7 @@ function taskActionLabel(action: TaskActionIntent) {
   if (action === "reject") return "Отклонить";
   if (action === "stuck") return "Застрял";
   if (action === "waiting") return "Жду";
+  if (action === "fact") return "Новый факт";
   if (action === "session_close") return "Закрыть сессию";
   return "Готово";
 }
@@ -1178,6 +1191,7 @@ function buildTaskActionPreview(action: TaskActionIntent | null, draft: TaskActi
     const nextCheck = draft.nextCheckDate ? ` Следующая проверка: ${formatDate(draft.nextCheckDate)}.` : "";
     return `Ожидание: ${note}.${nextCheck}`;
   }
+  if (action === "fact") return note ? `Новый факт по ${task.id}: ${note}.` : "";
   if (action === "session_close") return note ? `Закрытие рабочей сессии: ${note}.` : "";
   return note ? `Результат по ${task.id}: ${note}. GPT должна проверить критерий «${task.acceptanceCriteria || task.expectedResult}».` : "";
 }
@@ -1186,6 +1200,7 @@ function previewHint(action: TaskActionIntent) {
   if (action === "reject") return "Объясните GPT, почему задача не должна быть принята вами.";
   if (action === "stuck") return "Опишите конкретный внутренний блокер.";
   if (action === "waiting") return "Укажите, кого или что ждём.";
+  if (action === "fact") return "Коротко укажите новый значимый факт для GPT.";
   if (action === "session_close") return "Кратко зафиксируйте результат, остаток и следующий шаг.";
   return "Опишите сделанный результат и evidence для проверки GPT.";
 }
