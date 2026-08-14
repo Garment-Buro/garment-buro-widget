@@ -419,7 +419,7 @@ function PersonalWorkspace({
       setConfirmation("success");
       return result;
     } catch (error) {
-      setCommandFeedback(error instanceof Error ? error.message : "Не удалось отправить команду GPT.");
+      setCommandFeedback(readErrorMessage(error, "Не удалось отправить команду GPT."));
       setConfirmation("error");
       throw error;
     }
@@ -1412,6 +1412,12 @@ function unique(values: string[]) {
 
 function isTask(task: Task | undefined): task is Task {
   return Boolean(task);
+}
+
+function readErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  return fallback;
 }
 
 function toggleFullscreen() {

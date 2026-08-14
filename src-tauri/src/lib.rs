@@ -8,10 +8,49 @@ use tauri::{
   AppHandle, Emitter, LogicalSize, Manager, Size, WindowEvent,
 };
 
-const DATA_ENDPOINT: &str = "https://script.google.com/macros/s/AKfycbwPihtIvUQujuvtaUctNC2ojUfZMvobMh_iRUh8RNm1OvGL3Z2NCug5bwnEKJAfuOHclw/exec";
+const DATA_ENDPOINT: &str = "https://script.google.com/macros/s/AKfycby6TMvtASMfNOr95eLgkipoA3MqC9ZbvDnNgWAxckv-jQ8v0PMMC_D8So8vZdSyDJLypQ/exec";
 const EXECUTION_SHEET_ID: &str = "1LfhEpCwKrWTww8SvTUVrIofX1bJ1QmU0m7gbruZB0Qg";
 const MASTER_PROMPT_DOCUMENT_ID: &str = "1_EBiiqM_7c0FxpXbmfZpAg1-POaftWRm26EIvSflwJk";
 const WIDGET_BRIEF_DOCUMENT_ID: &str = "1PKxVgMn7NyL0Kn55WPsODdMK8Fu_IibHsnH5Nv3A0u8";
+
+fn apps_script_client(timeout_seconds: u64, error_prefix: &str) -> Result<reqwest::Client, String> {
+  reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(timeout_seconds))
+    .redirect(reqwest::redirect::Policy::none())
+    .build()
+    .map_err(|error| format!("{error_prefix}: {error}"))
+}
+
+async fn post_apps_script_json(
+  client: &reqwest::Client,
+  endpoint: &str,
+  body: Value,
+  error_prefix: &str,
+) -> Result<reqwest::Response, String> {
+  let response = client
+    .post(endpoint)
+    .json(&body)
+    .send()
+    .await
+    .map_err(|error| format!("{error_prefix}: {error}"))?;
+
+  if !response.status().is_redirection() {
+    return Ok(response);
+  }
+
+  let location = response
+    .headers()
+    .get(reqwest::header::LOCATION)
+    .and_then(|value| value.to_str().ok())
+    .filter(|value| !value.trim().is_empty())
+    .ok_or_else(|| format!("{error_prefix}: Apps Script не вернул адрес redirect"))?;
+
+  client
+    .get(location)
+    .send()
+    .await
+    .map_err(|error| format!("{error_prefix}: не удалось получить redirect Apps Script: {error}"))
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,13 +67,13 @@ async fn fetch_dashboard_data(token: String) -> Result<Value, String> {
     return Err("Код доступа не указан".into());
   }
 
-  let client = reqwest::Client::new();
-  let response = client
-    .post(DATA_ENDPOINT)
-    .json(&json!({ "token": token, "action": "dashboard" }))
-    .send()
-    .await
-    .map_err(|error| format!("Не удалось подключиться к данным: {error}"))?;
+  let client = apps_script_client(90, "Не удалось подготовить клиент данных")?;
+  let response = post_apps_script_json(
+    &client,
+    DATA_ENDPOINT,
+    json!({ "token": token, "action": "dashboard" }),
+    "Не удалось подключиться к данным",
+  ).await?;
 
   if !response.status().is_success() {
     return Err(format!("Сервис данных ответил с ошибкой {}", response.status()));
@@ -59,16 +98,13 @@ async fn submit_task_command(token: String, request: Value) -> Result<Value, Str
     .map(|value| value.trim().to_string())
     .filter(|value| !value.is_empty())
     .unwrap_or_else(|| DATA_ENDPOINT.to_string());
-  let client = reqwest::Client::builder()
-    .timeout(std::time::Duration::from_secs(90))
-    .build()
-    .map_err(|error| format!("Не удалось подготовить write-клиент: {error}"))?;
-  let response = client
-    .post(endpoint)
-    .json(&json!({ "token": token, "action": "taskCommand", "request": request }))
-    .send()
-    .await
-    .map_err(|error| format!("Не удалось отправить команду GPT: {error}"))?;
+  let client = apps_script_client(90, "Не удалось подготовить write-клиент")?;
+  let response = post_apps_script_json(
+    &client,
+    &endpoint,
+    json!({ "token": token, "action": "taskCommand", "request": request }),
+    "Не удалось отправить команду GPT",
+  ).await?;
   if !response.status().is_success() {
     return Err(format!("Apps Script вернул ошибку {}", response.status()));
   }
@@ -104,20 +140,17 @@ async fn ack_notification(token: String, notification_id: String, recipient_id: 
     .map(|value| value.trim().to_string())
     .filter(|value| !value.is_empty())
     .unwrap_or_else(|| DATA_ENDPOINT.to_string());
-  let client = reqwest::Client::builder()
-    .timeout(std::time::Duration::from_secs(30))
-    .build()
-    .map_err(|error| format!("Не удалось подготовить ACK-клиент: {error}"))?;
-  let response = client
-    .post(endpoint)
-    .json(&json!({
+  let client = apps_script_client(30, "Не удалось подготовить ACK-клиент")?;
+  let response = post_apps_script_json(
+    &client,
+    &endpoint,
+    json!({
       "token": token,
       "action": "notificationAck",
       "request": { "notificationId": notification_id, "recipientId": recipient_id }
-    }))
-    .send()
-    .await
-    .map_err(|error| format!("Не удалось подтвердить уведомление: {error}"))?;
+    }),
+    "Не удалось подтвердить уведомление",
+  ).await?;
   if !response.status().is_success() {
     return Err(format!("Apps Script вернул ошибку {}", response.status()));
   }

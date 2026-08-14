@@ -52,12 +52,12 @@ export function DesktopApp() {
 
         const savedSettings = { accessToken, personName };
         const dashboard = await loadDesktopDashboard(accessToken, personName);
-        await deliverProjectNotifications(dashboard, accessToken);
-        await ensureAutostart();
         if (!cancelled) {
           setSettings(savedSettings);
           setState(dashboard);
         }
+        void deliverProjectNotifications(dashboard, accessToken).catch(() => undefined);
+        void ensureAutostart();
       } catch (bootError) {
         if (!cancelled) setError(errorMessage(bootError));
       } finally {
@@ -105,10 +105,10 @@ export function DesktopApp() {
       await store.set("accessToken", accessToken);
       await store.set("personName", personName);
       await store.save();
-      await ensureAutostart();
-      await deliverProjectNotifications(dashboard, accessToken);
       setSettings({ accessToken, personName });
       setState(dashboard);
+      void ensureAutostart();
+      void deliverProjectNotifications(dashboard, accessToken).catch(() => undefined);
     } catch (activationError) {
       setError(errorMessage(activationError));
     } finally {

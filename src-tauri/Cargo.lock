@@ -1290,7 +1290,7 @@ dependencies = [
 
 [[package]]
 name = "garment-buro-desktop"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "chrono",
  "csv",
