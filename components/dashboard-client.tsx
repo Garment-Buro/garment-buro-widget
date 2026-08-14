@@ -229,7 +229,9 @@ export function DashboardClient({
     else result = await submitTaskCommand(submission, state, accessToken, onProgress);
     const refreshStartedAt = performance.now();
     void refresh().then(() => {
-      if (result?.timings) result.timings.dashboardRefreshMs = Math.round(performance.now() - refreshStartedAt);
+      const dashboardRefreshMs = Math.round(performance.now() - refreshStartedAt);
+      if (result?.timings) result.timings.dashboardRefreshMs = dashboardRefreshMs;
+      console.info("[dashboard refresh timing]", { dashboardRefreshMs });
     });
     return result;
   }, [accessToken, onConfirmTaskAction, refresh, state]);
