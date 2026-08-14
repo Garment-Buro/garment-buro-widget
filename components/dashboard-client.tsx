@@ -347,6 +347,7 @@ function PersonalWorkspace({
   const [taskActionDraft, setTaskActionDraft] = useState<TaskActionDraft>(emptyTaskActionDraft);
   const [confirmation, setConfirmation] = useState<TaskActionConfirmation>("idle");
   const [commandFeedback, setCommandFeedback] = useState("");
+  const [pomodoroMinutes, setPomodoroMinutes] = useState(25);
   const workSession = useWorkSession(person.id);
   const activeSession = workSession.session?.taskId === currentTask.id ? workSession.session : null;
   const goal = state.goal;
@@ -558,21 +559,26 @@ function PersonalWorkspace({
               </div>
             </div>
 
-            <aside className="task-action-panel">
-              <button
-                className="primary-task-action"
-                type="button"
-                disabled={confirmation === "saving" || (!canAcceptTask && !canStartSession)}
-                onClick={() => { void (canAcceptTask ? acceptTask() : startWorkingSession()); }}
-              >
-                <Play size={22} />
-                <span>{canAcceptTask ? "Начать" : activeSession ? "Сессия идёт" : currentTask.status === "IN_PROGRESS" ? "Работаю" : statusLabel(currentTask.status)}</span>
-              </button>
+            <aside className={activeSession ? "task-action-panel has-session" : "task-action-panel"}>
+              {!activeSession ? (
+                <button
+                  className="primary-task-action"
+                  type="button"
+                  disabled={confirmation === "saving" || (!canAcceptTask && !canStartSession)}
+                  onClick={() => { void (canAcceptTask ? acceptTask() : startWorkingSession()); }}
+                >
+                  <Play size={22} />
+                  <span>{canAcceptTask ? "Начать" : currentTask.status === "IN_PROGRESS" ? "Работаю" : statusLabel(currentTask.status)}</span>
+                </button>
+              ) : null}
 
               {activeSession ? (
                 <section className="work-session-card" aria-label="Активная рабочая сессия">
                   <header>
-                    <span><Timer size={16} />Рабочая сессия</span>
+                    <div>
+                      <span><Timer size={16} />Рабочая сессия</span>
+                      <small>{activeSession.status === "active" ? "Сейчас в работе" : "Сессия на паузе"}</small>
+                    </div>
                     <strong>{formatTimer(workSession.elapsedMs)}</strong>
                   </header>
                   <div className="work-session-actions">
@@ -583,20 +589,35 @@ function PersonalWorkspace({
                     <button type="button" onClick={() => selectTaskAction("session_close")}><Square size={13} />Закрыть</button>
                   </div>
                   <div className="pomodoro-control">
-                    <span><Timer size={14} />Pomodoro</span>
-                    {activeSession.pomodoro ? (
-                      <>
+                    <header>
+                      <span><Timer size={14} />Pomodoro</span>
+                      <small>{activeSession.pomodoro?.completedCount || 0} завершено</small>
+                    </header>
+                    <div className="pomodoro-presets" aria-label="Длительность Pomodoro">
+                      {[15, 25, 50].map((minutes) => (
+                        <button
+                          className={pomodoroMinutes === minutes ? "is-selected" : ""}
+                          type="button"
+                          key={minutes}
+                          onClick={() => setPomodoroMinutes(minutes)}
+                        >
+                          {minutes} мин
+                        </button>
+                      ))}
+                    </div>
+                    {activeSession.pomodoro && activeSession.pomodoro.status !== "completed" ? (
+                      <div className="pomodoro-active-row">
                         <strong>{formatTimer(workSession.pomodoroRemainingMs)}</strong>
-                        {activeSession.pomodoro.status === "running" ? (
-                          <button type="button" onClick={workSession.pausePomodoro}>Пауза</button>
-                        ) : activeSession.pomodoro.status === "paused" ? (
-                          <button type="button" onClick={workSession.resumePomodoro}>Продолжить</button>
-                        ) : (
-                          <button type="button" onClick={() => workSession.startPomodoro(activeSession.pomodoro?.durationMinutes || 25)}>Ещё</button>
-                        )}
-                      </>
+                        <button type="button" onClick={activeSession.pomodoro.status === "running" ? workSession.pausePomodoro : workSession.resumePomodoro}>
+                          {activeSession.pomodoro.status === "running" ? <Pause size={13} /> : <Play size={13} />}
+                          {activeSession.pomodoro.status === "running" ? "Пауза" : "Продолжить"}
+                        </button>
+                        <button type="button" onClick={() => workSession.startPomodoro(pomodoroMinutes)}>Заново</button>
+                      </div>
                     ) : (
-                      <div><button type="button" onClick={() => workSession.startPomodoro(25)}>25 мин</button><button type="button" onClick={() => workSession.startPomodoro(50)}>50 мин</button></div>
+                      <button className="pomodoro-start" type="button" onClick={() => workSession.startPomodoro(pomodoroMinutes)}>
+                        <Play size={13} />Запустить на {pomodoroMinutes} мин
+                      </button>
                     )}
                   </div>
                 </section>
@@ -620,21 +641,17 @@ function PersonalWorkspace({
                   preview={actionPreview}
                   onDraftChange={setTaskActionDraft}
                   onClose={closeTaskAction}
+                  onSubmit={() => { void confirmTaskAction(); }}
+                  confirmation={confirmation}
+                  feedback={commandFeedback}
                 />
               ) : null}
-              <div className={`assistant-note ${confirmation === "success" ? "is-success" : ""} ${confirmation === "error" ? "is-error" : ""}`} aria-live="polite">
-                {confirmation === "success" ? <Check size={19} /> : confirmation === "error" ? <AlertTriangle size={19} /> : <Sparkles size={19} />}
-                <p>{actionNote}</p>
-              </div>
-              <button
-                className={`confirm-task-action is-${confirmation}`}
-                type="button"
-                disabled={!actionPreview || confirmation !== "idle"}
-                onClick={() => { void confirmTaskAction(); }}
-              >
-                {confirmation === "saving" ? <RefreshCw className="spin" size={17} /> : confirmation === "success" ? <Check size={17} /> : null}
-                <span>{confirmation === "saving" ? "Отправляем в GPT" : confirmation === "success" ? "Синхронизировано" : "Отправить в GPT"}</span>
-              </button>
+              {!taskAction && (!activeSession || confirmation !== "idle") ? (
+                <div className={`assistant-note ${confirmation === "success" ? "is-success" : ""} ${confirmation === "error" ? "is-error" : ""}`} aria-live="polite">
+                  {confirmation === "success" ? <Check size={19} /> : confirmation === "error" ? <AlertTriangle size={19} /> : <Sparkles size={19} />}
+                  <p>{actionNote}</p>
+                </div>
+              ) : null}
             </aside>
           </article>
 
@@ -869,7 +886,7 @@ function TaskTree({
             <div className="tree-stage" style={{ "--tree-scale": scale } as CSSProperties}>
               <div className="goal-node">
                 <span>Goal</span>
-                <div><strong>{goal?.id || "Цель не задана"}</strong><p>{goal?.title || "Нет данных"}</p></div>
+                <div className="goal-copy"><strong>{goal?.id || "Цель не задана"}</strong><p>{goal?.title || "Нет данных"}</p></div>
                 <div className="goal-progress"><i style={{ width: `${projectProgress}%` }} /></div>
                 <b>{projectProgress}%</b>
               </div>
@@ -985,7 +1002,10 @@ function TaskActionPopover({
   acceptanceCriteria,
   preview,
   onDraftChange,
-  onClose
+  onClose,
+  onSubmit,
+  confirmation,
+  feedback
 }: {
   intent: TaskActionIntent;
   draft: TaskActionDraft;
@@ -993,6 +1013,9 @@ function TaskActionPopover({
   preview: string;
   onDraftChange: (draft: TaskActionDraft) => void;
   onClose: () => void;
+  onSubmit: () => void;
+  confirmation: TaskActionConfirmation;
+  feedback: string;
 }) {
   const updateDraft = (patch: Partial<TaskActionDraft>) => onDraftChange({ ...draft, ...patch });
 
@@ -1053,6 +1076,24 @@ function TaskActionPopover({
         <small>Будет отправлено в GPT</small>
         <p>{preview || previewHint(intent)}</p>
       </div>
+      <footer className="task-action-popover-footer">
+        {confirmation === "error" && feedback ? <p><AlertTriangle size={14} />{feedback}</p> : null}
+        <button
+          className={`confirm-task-action is-${confirmation}`}
+          type="button"
+          disabled={!preview || confirmation !== "idle"}
+          onClick={onSubmit}
+        >
+          {confirmation === "saving" ? <RefreshCw className="spin" size={17} /> : null}
+          <span>
+            {confirmation === "saving"
+              ? "Отправляем в GPT"
+              : intent === "session_close"
+                ? "Отправить и закрыть сессию"
+                : "Отправить в GPT"}
+          </span>
+        </button>
+      </footer>
     </section>
   );
 }

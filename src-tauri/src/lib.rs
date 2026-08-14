@@ -26,7 +26,7 @@ async fn post_apps_script_json(
   endpoint: &str,
   body: Value,
   error_prefix: &str,
-) -> Result<reqwest::Response, String> {
+) -> Result<Value, String> {
   for attempt in 0..3 {
     let response = client
       .post(endpoint)
@@ -36,44 +36,58 @@ async fn post_apps_script_json(
       .await
       .map_err(|error| format!("{error_prefix}: {error}"))?;
 
-    if !response.status().is_redirection() {
-      if response.status() != reqwest::StatusCode::NOT_FOUND || attempt == 2 {
-        return Ok(response);
-      }
-      continue;
-    }
-
-    let mut location = response
-      .headers()
-      .get(reqwest::header::LOCATION)
-      .and_then(|value| value.to_str().ok())
-      .filter(|value| !value.trim().is_empty())
-      .ok_or_else(|| format!("{error_prefix}: Apps Script не вернул адрес redirect"))?
-      .to_string();
-    let mut final_response = None;
-    for _redirect_hop in 0..5 {
-      let redirected = client
-        .get(&location)
-        .send()
-        .await
-        .map_err(|error| format!("{error_prefix}: не удалось получить redirect Apps Script: {error}"))?;
-      if !redirected.status().is_redirection() {
-        final_response = Some(redirected);
-        break;
-      }
-      location = redirected
+    let final_response = if response.status().is_redirection() {
+      let mut location = response
         .headers()
         .get(reqwest::header::LOCATION)
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| format!("{error_prefix}: Apps Script вернул redirect без адреса"))?
+        .ok_or_else(|| format!("{error_prefix}: Apps Script не вернул адрес redirect"))?
         .to_string();
+      let mut followed_response = None;
+      for _redirect_hop in 0..5 {
+        let redirected = client
+          .get(&location)
+          .send()
+          .await
+          .map_err(|error| format!("{error_prefix}: не удалось получить redirect Apps Script: {error}"))?;
+        if !redirected.status().is_redirection() {
+          followed_response = Some(redirected);
+          break;
+        }
+        location = redirected
+          .headers()
+          .get(reqwest::header::LOCATION)
+          .and_then(|value| value.to_str().ok())
+          .filter(|value| !value.trim().is_empty())
+          .ok_or_else(|| format!("{error_prefix}: Apps Script вернул redirect без адреса"))?
+          .to_string();
+      }
+      followed_response.ok_or_else(|| format!("{error_prefix}: слишком много redirect Apps Script"))?
+    } else {
+      response
+    };
+
+    if final_response.status() == reqwest::StatusCode::NOT_FOUND && attempt < 2 {
+      continue;
     }
-    let redirected = final_response
-      .ok_or_else(|| format!("{error_prefix}: слишком много redirect Apps Script"))?;
-    if redirected.status() != reqwest::StatusCode::NOT_FOUND || attempt == 2 {
-      return Ok(redirected);
+    if !final_response.status().is_success() {
+      return Err(format!("{error_prefix}: Apps Script вернул ошибку {}", final_response.status()));
     }
+    let response_text = final_response
+      .text()
+      .await
+      .map_err(|error| format!("{error_prefix}: не удалось прочитать ответ Apps Script: {error}"))?;
+    let payload = serde_json::from_str::<Value>(&response_text)
+      .map_err(|error| format!("{error_prefix}: Apps Script вернул неверный ответ: {error}"))?;
+    let is_do_get_fallback = payload.get("ok").and_then(Value::as_bool) == Some(false)
+      && payload.get("error").and_then(Value::as_str)
+        .map(|error| error.contains("protected dashboard connection"))
+        .unwrap_or(false);
+    if is_do_get_fallback && attempt < 2 {
+      continue;
+    }
+    return Ok(payload);
   }
 
   Err(format!("{error_prefix}: Apps Script не ответил после повторных запросов"))
@@ -101,17 +115,7 @@ async fn fetch_dashboard_data(token: String) -> Result<Value, String> {
     json!({ "token": token, "action": "dashboard" }),
     "Не удалось подключиться к данным",
   ).await?;
-
-  if !response.status().is_success() {
-    return Err(format!("Сервис данных ответил с ошибкой {}", response.status()));
-  }
-
-  let payload = response
-    .json::<Value>()
-    .await
-    .map_err(|error| format!("Сервис данных вернул неверный ответ: {error}"))?;
-
-  Ok(payload)
+  Ok(response)
 }
 
 #[tauri::command]
@@ -126,19 +130,12 @@ async fn submit_task_command(token: String, request: Value) -> Result<Value, Str
     .filter(|value| !value.is_empty())
     .unwrap_or_else(|| DATA_ENDPOINT.to_string());
   let client = apps_script_client(90, "Не удалось подготовить write-клиент")?;
-  let response = post_apps_script_json(
+  let payload = post_apps_script_json(
     &client,
     &endpoint,
     json!({ "token": token, "action": "taskCommand", "request": request }),
     "Не удалось отправить команду GPT",
   ).await?;
-  if !response.status().is_success() {
-    return Err(format!("Apps Script вернул ошибку {}", response.status()));
-  }
-  let payload = response
-    .json::<Value>()
-    .await
-    .map_err(|error| format!("Apps Script вернул неверный ответ: {error}"))?;
   if payload.get("ok").and_then(Value::as_bool) != Some(true) {
     return Err(payload.get("error").and_then(Value::as_str)
       .unwrap_or("GPT не смог зафиксировать команду")
@@ -168,7 +165,7 @@ async fn ack_notification(token: String, notification_id: String, recipient_id: 
     .filter(|value| !value.is_empty())
     .unwrap_or_else(|| DATA_ENDPOINT.to_string());
   let client = apps_script_client(30, "Не удалось подготовить ACK-клиент")?;
-  let response = post_apps_script_json(
+  let payload = post_apps_script_json(
     &client,
     &endpoint,
     json!({
@@ -178,11 +175,6 @@ async fn ack_notification(token: String, notification_id: String, recipient_id: 
     }),
     "Не удалось подтвердить уведомление",
   ).await?;
-  if !response.status().is_success() {
-    return Err(format!("Apps Script вернул ошибку {}", response.status()));
-  }
-  let payload = response.json::<Value>().await
-    .map_err(|error| format!("Apps Script вернул неверный ACK-ответ: {error}"))?;
   if payload.get("ok").and_then(Value::as_bool) != Some(true) {
     return Err(payload.get("error").and_then(Value::as_str)
       .unwrap_or("Apps Script не подтвердил уведомление")

@@ -209,6 +209,7 @@ test("17. browser code never reads OPENAI_API_KEY", async () => {
 test("17a. task actions use the GPT write command instead of a local mock", async () => {
   const serviceCode = await readFile(new URL("../lib/services/task-action-service.ts", import.meta.url), "utf8");
   const dashboardCode = await readFile(new URL("../components/dashboard-client.tsx", import.meta.url), "utf8");
+  const dashboardStyles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const routeCode = await readFile(new URL("../app/api/task-command/route.ts", import.meta.url), "utf8");
   const gatewayCode = await readFile(new URL("../apps-script/task-commands.gs", import.meta.url), "utf8");
   assert.match(serviceCode, /task-command/);
@@ -216,6 +217,12 @@ test("17a. task actions use the GPT write command instead of a local mock", asyn
   assert.doesNotMatch(dashboardCode, /localTaskSignals|saveTaskActionMock/);
   assert.match(dashboardCode, /Отправить в GPT/);
   assert.match(dashboardCode, /label="Новый факт"/);
+  assert.match(dashboardCode, /Отправить и закрыть сессию/);
+  assert.match(dashboardCode, /\[15, 25, 50\]/);
+  assert.doesNotMatch(dashboardCode, /activeSession \? "Сессия идёт"/);
+  assert.match(dashboardStyles, /\.task-action-popover-footer[\s\S]*position: sticky/);
+  assert.match(dashboardStyles, /\.task-node[\s\S]*grid-template-rows: auto auto auto/);
+  assert.match(dashboardStyles, /\.goal-copy[\s\S]*padding-bottom: 8px/);
   assert.match(routeCode, /"fact"/);
   assert.match(gatewayCode, /request\.intent === "fact"/);
   assert.match(gatewayCode, /plan\.updateType = "NEW_FACT"/);
@@ -267,6 +274,7 @@ test("17c. widget backend rebuilds trusted context and accepts only verified gat
   assert.match(desktopCode, /for attempt in 0\.\.3/);
   assert.match(desktopCode, /for _redirect_hop in 0\.\.5/);
   assert.match(desktopCode, /StatusCode::NOT_FOUND/);
+  assert.match(desktopCode, /protected dashboard connection/);
   assert.match(desktopCode, /redirect\(reqwest::redirect::Policy::none\(\)\)/);
 });
 
