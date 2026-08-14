@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { buildTaskAssistantClientContext } from "../lib/ai/client-context.ts";
+import { parseCsv } from "../lib/ai/csv.ts";
 import { buildDashboardDomain } from "../lib/domain/dashboard-engine.ts";
 import {
   buildDependencySummary,
@@ -156,6 +158,47 @@ test("14. Google Sheets v1 source contains no write operations", async () => {
   const sourceCode = await readFile(new URL("../lib/data/google-sheets.ts", import.meta.url), "utf8");
   assert.match(sourceCode, /spreadsheets\.readonly/);
   assert.doesNotMatch(sourceCode, /values\.append|values\.update|batchUpdate|spreadsheets\.create/);
+});
+
+test("15. GPT context uses the configured dashboard person and only related tasks", () => {
+  const target = task({ id: "TASK-031", owner: "Никита", dependsOn: ["TASK-026"], unlocks: ["TASK-099"] });
+  const dependency = task({ id: "TASK-026", owner: "Костя" });
+  const unrelated = task({ id: "TASK-777", owner: "Вера" });
+  const state = {
+    person: nikita,
+    tasks: [target, dependency, unrelated],
+    taskContexts: [{
+      id: "CTX-031", taskId: target.id, canonicalRefs: ["PB-002"], doNotReopen: "",
+      currentWorkingState: "", openQuestions: "", handoffResult: "", handoffTo: "",
+      updatedBy: "Костя", lastUpdated: "13.08.2026"
+    }],
+    goals: [goal002],
+    goal: goal002,
+    progress: progress(goal002, [verifiedGate]).progress,
+    changeEvents: [], issues: [], sources: [source("execution"), source("control")],
+    dataHealth: { codes: [], details: [], staleMinutes: null, usingSnapshot: false },
+    updatedAt: "2026-08-14T12:00:00.000Z"
+  } as unknown as DashboardState;
+
+  const context = buildTaskAssistantClientContext(state, target.id);
+  assert.equal(context.personName, "Никита");
+  assert.deepEqual(context.relatedTasks.map((item) => item.id), ["TASK-026"]);
+  assert.equal(context.taskContext?.id, "CTX-031");
+});
+
+test("16. Drive CSV parser preserves commas, quotes and embedded newlines", () => {
+  assert.deepEqual(parseCsv('A,B\r\n1,"строка, с запятой"\r\n2,"две\nстроки"\r\n'), [
+    ["A", "B"],
+    ["1", "строка, с запятой"],
+    ["2", "две\nстроки"]
+  ]);
+});
+
+test("17. browser code never reads OPENAI_API_KEY", async () => {
+  const clientCode = await readFile(new URL("../lib/services/task-action-service.ts", import.meta.url), "utf8");
+  const dashboardCode = await readFile(new URL("../components/dashboard-client.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(clientCode, /OPENAI_API_KEY/);
+  assert.doesNotMatch(dashboardCode, /OPENAI_API_KEY/);
 });
 
 function progress(goalValue: Goal, gates: ProgressGate[], currentTask: Task | null = null, events: ChangeEvent[] = []) {

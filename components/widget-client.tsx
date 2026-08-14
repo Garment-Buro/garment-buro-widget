@@ -8,6 +8,16 @@ import { rewardTierForPercent } from "@/lib/reward-tier";
 import type { DashboardState } from "@/lib/types";
 
 const refreshMs = 60_000;
+const personAssets: Partial<Record<string, { full: string; avatar: string }>> = {
+  "Вера": {
+    full: "/assets/people/vera-full.png",
+    avatar: "/assets/people/vera-avatar.png"
+  },
+  "Никита": {
+    full: "/assets/people/nikita-full.png",
+    avatar: "/assets/people/nikita-avatar.png"
+  }
+};
 
 export function WidgetClient({
   initialState,
@@ -114,7 +124,7 @@ export function WidgetClient({
           <aside className="widget-person">
             <div className="widget-person-art">
               <Image
-                src="/assets/people/vera-full.png"
+                src={personAssets[person.name]?.full || "/assets/people/vera-full.png"}
                 alt={`Аватар: ${person.name}`}
                 fill
                 sizes="150px"

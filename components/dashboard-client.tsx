@@ -51,6 +51,7 @@ import { buildPersonalTaskQueue, type LocalTaskSignal } from "@/lib/domain/task-
 import { rewardTierForPercent } from "@/lib/reward-tier";
 import {
   requestTaskActionHelp,
+  requestTaskAssistant,
   saveTaskActionMock,
   type TaskActionIntent,
   type TaskActionSubmission
@@ -65,6 +66,10 @@ const personAssets: Partial<Record<string, { full: string; avatar: string }>> = 
   "Вера": {
     full: "/assets/people/vera-full.png",
     avatar: "/assets/people/vera-avatar.png"
+  },
+  "Никита": {
+    full: "/assets/people/nikita-full.png",
+    avatar: "/assets/people/nikita-avatar.png"
   }
 };
 
@@ -293,7 +298,7 @@ export function DashboardClient({
         />
       )}
       {selectedTask ? (
-        <TaskDrawer task={selectedTask} allTasks={state.tasks} onClose={() => setSelectedTask(null)} />
+        <TaskDrawer task={selectedTask} allTasks={state.tasks} state={state} onClose={() => setSelectedTask(null)} />
       ) : null}
     </>
   );
@@ -414,7 +419,9 @@ function PersonalWorkspace({
     setAssistantReply("");
     setTaskActionDraft((draft) => ({ ...draft, blockerOutcome: null }));
     try {
-      setAssistantReply(await requestTaskActionHelp(taskActionDraft.note));
+      setAssistantReply(await requestTaskActionHelp(currentTask.id, taskActionDraft.note, state));
+    } catch (error) {
+      setAssistantReply(error instanceof Error ? error.message : "Не удалось получить подсказку GPT.");
     } finally {
       setIsRequestingHelp(false);
     }
@@ -1121,7 +1128,17 @@ function StatusPill({ status }: { status: string }) {
   return <span className={`status-pill status-${status.toLowerCase()}`}><i />{statusLabel(status)}</span>;
 }
 
-function TaskDrawer({ task, allTasks, onClose }: { task: Task; allTasks: Task[]; onClose: () => void }) {
+function TaskDrawer({
+  task,
+  allTasks,
+  state,
+  onClose
+}: {
+  task: Task;
+  allTasks: Task[];
+  state: DashboardState;
+  onClose: () => void;
+}) {
   const status = effectiveStatus(task, allTasks);
   return (
     <>
@@ -1145,8 +1162,77 @@ function TaskDrawer({ task, allTasks, onClose }: { task: Task; allTasks: Task[];
         <DrawerField label="Следующая проверка" value={formatDate(task.nextCheckDate)} />
         <DrawerField label="Срок" value={formatDate(task.deadline)} />
         <DrawerField label="Источник" value={task.source || "—"} />
+        <TaskAssistantPanel task={task} state={state} />
       </aside>
     </>
+  );
+}
+
+function TaskAssistantPanel({ task, state }: { task: Task; state: DashboardState }) {
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [sourceNote, setSourceNote] = useState("");
+
+  useEffect(() => {
+    setQuestion("");
+    setAnswer("");
+    setError("");
+    setSourceNote("");
+    setIsLoading(false);
+  }, [task.id]);
+
+  async function ask(mode: "start" | "ask" | "acceptance") {
+    if (isLoading || (mode === "ask" && !question.trim())) return;
+    setIsLoading(true);
+    setAnswer("");
+    setError("");
+    setSourceNote("");
+    try {
+      const response = await requestTaskAssistant({
+        taskId: task.id,
+        mode,
+        message: mode === "ask" ? question.trim() : undefined
+      }, state);
+      setAnswer(response.answer);
+      const warning = response.warnings[0];
+      setSourceNote(warning || `Сверено с Google Drive · ${response.model}`);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Не удалось получить ответ GPT.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  return (
+    <section className="drawer-assistant" aria-label="GPT-навигатор по задаче">
+      <header>
+        <div><span>GPT-навигатор</span><strong>Работа с текущими данными</strong></div>
+        <Sparkles size={19} />
+      </header>
+      <p>Перед ответом читаем актуальный мастер‑промпт, задачу, контекст, playbook и последние события из Google Drive.</p>
+      <div className="drawer-assistant-actions">
+        <button type="button" disabled={isLoading} onClick={() => { void ask("start"); }}>Как начать</button>
+        <button type="button" disabled={isLoading} onClick={() => { void ask("acceptance"); }}>Проверить готовность</button>
+      </div>
+      <form onSubmit={(event) => { event.preventDefault(); void ask("ask"); }}>
+        <textarea
+          rows={3}
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+          placeholder="Спросить GPT по этой задаче"
+          maxLength={4000}
+        />
+        <button type="submit" disabled={isLoading || !question.trim()}>
+          {isLoading ? <RefreshCw className="spin" size={15} /> : <ArrowRight size={15} />}
+          {isLoading ? "Сверяю данные" : "Спросить"}
+        </button>
+      </form>
+      {answer ? <div className="drawer-assistant-answer"><Sparkles size={16} /><p>{answer}</p></div> : null}
+      {error ? <div className="drawer-assistant-error"><AlertTriangle size={16} /><p>{error}</p></div> : null}
+      {sourceNote ? <small>{sourceNote}</small> : null}
+    </section>
   );
 }
 

@@ -1615,6 +1615,116 @@ input:focus-visible {
   line-height: 1.55;
 }
 
+.drawer-assistant {
+  display: grid;
+  gap: 13px;
+  margin-top: 10px;
+  border: 1px solid rgba(238, 123, 22, 0.28);
+  border-radius: 12px;
+  padding: 18px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.drawer-assistant > header {
+  display: flex;
+  align-items: center;
+  color: var(--orange);
+}
+
+.drawer-assistant > header div {
+  display: grid;
+  gap: 3px;
+}
+
+.drawer-assistant > header strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.drawer-assistant > p,
+.drawer-assistant-answer p,
+.drawer-assistant-error p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.drawer-assistant-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.drawer-assistant-actions button,
+.drawer-assistant form button {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: #f4f2ed;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.drawer-assistant-actions button:hover,
+.drawer-assistant form button:hover {
+  border-color: var(--orange);
+}
+
+.drawer-assistant form {
+  display: grid;
+  gap: 8px;
+}
+
+.drawer-assistant textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 10px 11px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.drawer-assistant form button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-color: #252522;
+  background: #252522;
+  color: #fff;
+}
+
+.drawer-assistant button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.drawer-assistant-answer,
+.drawer-assistant-error {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(238, 123, 22, 0.09);
+}
+
+.drawer-assistant-error {
+  background: rgba(181, 65, 55, 0.09);
+  color: #8f312a;
+}
+
+.drawer-assistant > small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
 @media (max-width: 1360px) {
   .personal-page {
     grid-template-columns: 230px minmax(520px, 1fr) 330px;

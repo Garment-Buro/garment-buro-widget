@@ -1,6 +1,6 @@
 # GARMENT BURO / Project Control
 
-Read-only internal live dashboard and compact desktop widget. Google Sheets remain the source of truth; v1 never writes tasks, gates, owners, deadlines, issues, or statuses back to Google.
+Internal live dashboard and compact desktop widget. Google Sheets remain the source of truth. The GPT navigator reads the current task context and live Drive instructions, but this release does not write tasks, gates, owners, deadlines, issues, or statuses back to Google.
 
 ## Local Run
 
@@ -20,6 +20,16 @@ GoogleSheetsDataSource / MockDataSource
   -> DashboardState
   -> /api/dashboard
   -> dashboard and widget UI
+```
+
+Significant GPT requests use a separate read-only context pass:
+
+```text
+00_MASTER PROMPT (fresh Drive export)
+  + TASKS / TASK_CONTEXT (current dashboard read)
+  + PLAYBOOKS / TASK_UPDATES / EVENTS / ROUTING_ACTIONS / SESSION_HANDOFFS
+  -> server/native OpenAI Responses API call
+  -> concise task guidance in the drawer or blocker action
 ```
 
 The UI receives normalized entities only and does not know Google column names. Polling runs every 60 seconds, manual refresh is available on the full dashboard, and refresh failures keep the currently rendered state.
@@ -44,6 +54,8 @@ DASHBOARD_REFRESH_MS=60000
 DASHBOARD_SNAPSHOT_PATH=.data/dashboard-google-snapshot.json
 APPS_SCRIPT_WEB_APP_URL=https://script.google.com/macros/s/.../exec
 APPS_SCRIPT_ACCESS_TOKEN=...
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-5.6-terra
 GOOGLE_EXECUTION_SPREADSHEET_ID=...
 GOOGLE_CONTROL_SPREADSHEET_ID=...
 ```
@@ -67,7 +79,11 @@ or:
 GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\service-account.json
 ```
 
-The service account or API key must have read access to both spreadsheets. Credentials are imported only by server modules and must never use a `NEXT_PUBLIC_` prefix.
+The service account or Google API key must have read access to both spreadsheets. Credentials are imported only by server modules and must never use a `NEXT_PUBLIC_` prefix.
+
+`OPENAI_API_KEY` is also server/native-only. Browser requests go through `/api/assistant`; the Tauri webview sends the task context to a native Rust command, so the key is never exposed to React. During `tauri dev`, the native process reads `.env.local` from the project root. A distributed installer does not bundle `.env.local` or the key; production distribution will need a protected remote backend or an operating-system secret setup.
+
+The GPT navigator refreshes `00_MASTER PROMPT — ЛИЧНЫЙ ПРОЕКТ` before every request and uses `DASHBOARD_PERSON_NAME` (or the desktop employee setting) as `AUTHOR`. It does not use chat history as project state. The current direct Drive export works with the existing link access; if Drive sharing is restricted later, move these reads behind Apps Script or authenticated Google APIs.
 
 ## Resilience
 
@@ -82,7 +98,7 @@ npx tsc --noEmit
 npm run build
 ```
 
-The acceptance suite covers current-task selection, gate-based progress, task potential, scope and forecast changes, waiting work, data gaps, snapshot fallback, factual graph construction, and the read-only Google contract.
+The acceptance suite covers current-task selection, gate-based progress, task potential, scope and forecast changes, waiting work, data gaps, snapshot fallback, factual graph construction, the read-only Google contract, and GPT context isolation.
 
 ## Desktop App
 
