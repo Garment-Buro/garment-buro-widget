@@ -32,6 +32,7 @@ export function isTaskPausedForPerson(
     && Boolean(task.handoffTo.trim())
     && !task.handoffTo.toLocaleLowerCase("ru").includes(personName.trim().toLocaleLowerCase("ru"));
   return task.status === "WAITING_EXTERNAL"
+    || task.status === "BLOCKED"
     || handedOffForReview
     || signals[task.id] === "waiting"
     || signals[task.id] === "stuck";

@@ -68,6 +68,44 @@ async fn fetch_dashboard_data(token: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
+async fn submit_task_command(token: String, request: Value) -> Result<Value, String> {
+  if token.trim().is_empty() {
+    return Err("Код доступа не указан".into());
+  }
+  load_local_environment();
+  let endpoint = env::var("APPS_SCRIPT_WEB_APP_URL")
+    .ok()
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty())
+    .unwrap_or_else(|| DATA_ENDPOINT.to_string());
+  let client = reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(90))
+    .build()
+    .map_err(|error| format!("Не удалось подготовить write-клиент: {error}"))?;
+  let response = client
+    .post(endpoint)
+    .json(&json!({ "token": token, "action": "taskCommand", "request": request }))
+    .send()
+    .await
+    .map_err(|error| format!("Не удалось отправить команду GPT: {error}"))?;
+  if !response.status().is_success() {
+    return Err(format!("Apps Script вернул ошибку {}", response.status()));
+  }
+  let payload = response
+    .json::<Value>()
+    .await
+    .map_err(|error| format!("Apps Script вернул неверный ответ: {error}"))?;
+  if payload.get("ok").and_then(Value::as_bool) != Some(true) {
+    return Err(payload.get("error").and_then(Value::as_str)
+      .unwrap_or("GPT не смог зафиксировать команду")
+      .to_string());
+  }
+  payload.get("commandResult")
+    .cloned()
+    .ok_or_else(|| "Развёрнутый Apps Script пока не поддерживает запись taskCommand.".to_string())
+}
+
+#[tauri::command]
 async fn ask_task_assistant(request: TaskAssistantRequest) -> Result<Value, String> {
   load_local_environment();
   validate_assistant_request(&request)?;
@@ -460,6 +498,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       fetch_dashboard_data,
       ask_task_assistant,
+      submit_task_command,
       open_dashboard_window,
       collapse_widget_window,
       hide_main_window,

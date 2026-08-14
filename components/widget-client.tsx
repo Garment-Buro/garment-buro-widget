@@ -1,12 +1,14 @@
 "use client";
 
-import { AlertTriangle, Bell, Clock3, Maximize2, Pin, PinOff, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Bell, Clock3, Maximize2, Pin, PinOff, RefreshCw, Timer, X } from "lucide-react";
 import Image from "next/image";
 import { type MouseEvent, useCallback, useEffect, useState } from "react";
 import { formatDate } from "@/lib/date";
 import { activePushNotifications } from "@/lib/domain/notification-engine";
+import { formatTimer } from "@/lib/domain/work-session";
 import { personAsset } from "@/lib/person-assets";
 import { rewardTierForPercent } from "@/lib/reward-tier";
+import { useWorkSession } from "@/lib/use-work-session";
 import type { DashboardState } from "@/lib/types";
 
 const refreshMs = 60_000;
@@ -54,6 +56,7 @@ export function WidgetClient({
 
   const person = state.person;
   const currentTask = state.currentTask;
+  const workSession = useWorkSession(person?.id || "");
 
   if (!person || !currentTask) {
     return (
@@ -102,6 +105,13 @@ export function WidgetClient({
           >
             <i aria-hidden="true" />{freshness}
           </small>
+          {workSession.session ? (
+            <button className="widget-session-pill" type="button" onClick={openDashboard} title="Открыть рабочую сессию">
+              <Timer size={14} />
+              <span>{workSession.session.status === "paused" ? "Пауза" : formatTimer(workSession.elapsedMs)}</span>
+              {workSession.session.pomodoro ? <b>🍅 {formatTimer(workSession.pomodoroRemainingMs)}</b> : null}
+            </button>
+          ) : null}
           <div className="widget-window-controls">
             {notificationCount ? (
               <span className="widget-notification-indicator" title={`Новых уведомлений: ${notificationCount}`}>

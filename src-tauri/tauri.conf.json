@@ -1,11 +1,11 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "GARMENT BURO Widget",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "identifier": "ru.garmentburo.projectcontrol",
   "build": {
     "frontendDist": "../desktop-dist",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeDevCommand": "npm run desktop:dev",
     "beforeBuildCommand": "npm run desktop:build"
   },

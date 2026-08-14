@@ -60,10 +60,11 @@ test("done signal removes a task and opens its dependent task", () => {
 test("waiting and blocked tasks remain in queue but move behind actionable tasks", () => {
   const tasks = [
     task({ id: "TASK-001", deadline: "12.08.2026" }),
-    task({ id: "TASK-002", deadline: "14.08.2026" })
+    task({ id: "TASK-002", deadline: "14.08.2026" }),
+    task({ id: "TASK-003", deadline: "11.08.2026", status: "BLOCKED" })
   ];
 
-  assert.deepEqual(buildPersonalTaskQueue(tasks, "Вера", { "TASK-001": "waiting" }).map((item) => item.id), ["TASK-002", "TASK-001"]);
+  assert.deepEqual(buildPersonalTaskQueue(tasks, "Вера", { "TASK-001": "waiting" }).map((item) => item.id), ["TASK-002", "TASK-003", "TASK-001"]);
 });
 
 test("new fact keeps the task active without lowering it as a pause", () => {

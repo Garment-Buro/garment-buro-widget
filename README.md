@@ -1,6 +1,6 @@
 # GARMENT BURO / Project Control
 
-Internal live dashboard and compact desktop widget. Google Sheets remain the source of truth. The GPT navigator reads the current task context and live Drive instructions, but this release does not write tasks, gates, owners, deadlines, issues, or statuses back to Google.
+Internal live dashboard and compact desktop widget. Google Sheets remain the source of truth. The widget sends explicit employee commands to GPT; the model prepares a constrained mutation plan and the Apps Script gateway applies and verifies it in the existing Sheets model.
 
 ## Local Run
 
@@ -22,14 +22,16 @@ GoogleSheetsDataSource / MockDataSource
   -> dashboard and widget UI
 ```
 
-Significant GPT requests use a separate read-only context pass:
+Task-management commands use the following write path:
 
 ```text
-00_MASTER PROMPT (fresh Drive export)
-  + TASKS / TASK_CONTEXT (current dashboard read)
-  + PLAYBOOKS / TASK_UPDATES / EVENTS / ROUTING_ACTIONS / SESSION_HANDOFFS
-  -> server/native OpenAI Responses API call
-  -> concise task guidance in the drawer or blocker action
+widget action + employee comment
+  -> Apps Script taskCommand gateway
+  -> fresh MASTER / TASK / TASK_UPDATES context
+  -> OpenAI structured mutation plan
+  -> guarded TASKS / TASK_UPDATES / SESSION_HANDOFFS write
+  -> verification read
+  -> updated dashboard state
 ```
 
 The UI receives normalized entities only and does not know Google column names. Polling runs every 60 seconds, manual refresh is available on the full dashboard, and refresh failures keep the currently rendered state.
@@ -40,7 +42,7 @@ Execution System reads `PEOPLE`, `GOALS`, `MILESTONES`, `TASKS`, `TASK_CONTEXT`,
 
 Only active `VERIFIED_DONE` gates earn progress. A current task can show a dotted potential segment when it is listed in `CLOSED_BY_TASK`, but that segment does not become solid until the gate is verified.
 
-For accounts where Google Cloud billing registration is unavailable, set `DASHBOARD_DATA_SOURCE=apps-script`. The Apps Script web app reads the same private spreadsheets and returns the same normalized input contract without requiring a service-account key.
+For accounts where Google Cloud billing registration is unavailable, set `DASHBOARD_DATA_SOURCE=apps-script`. The Apps Script web app reads the same private spreadsheets and returns the same normalized input contract without requiring a service-account key. To enable task commands, add [`apps-script/task-commands.gs`](apps-script/task-commands.gs) to that project and follow [`apps-script/README.md`](apps-script/README.md).
 
 ## Environment
 
@@ -81,9 +83,9 @@ GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\service-account.json
 
 The service account or Google API key must have read access to both spreadsheets. Credentials are imported only by server modules and must never use a `NEXT_PUBLIC_` prefix.
 
-`OPENAI_API_KEY` is also server/native-only. Browser requests go through `/api/assistant`; the Tauri webview sends the task context to a native Rust command, so the key is never exposed to React. During `tauri dev`, the native process reads `.env.local` from the project root. A distributed installer does not bundle `.env.local` or the key; production distribution will need a protected remote backend or an operating-system secret setup.
+`OPENAI_API_KEY` is server-only. For task commands it belongs in Apps Script Properties so every installed desktop client uses the same protected GPT/Sheets gateway. It must not be bundled into React or a distributed installer. The older native read-only assistant command can still read `.env.local` during development, but the task-management UI no longer exposes that chat panel.
 
-The GPT navigator refreshes `00_MASTER PROMPT — ЛИЧНЫЙ ПРОЕКТ` before every request and uses `DASHBOARD_PERSON_NAME` (or the desktop employee setting) as `AUTHOR`. It does not use chat history as project state. The current direct Drive export works with the existing link access; if Drive sharing is restricted later, move these reads behind Apps Script or authenticated Google APIs.
+The task-command gateway refreshes `00_MASTER PROMPT — ЛИЧНЫЙ ПРОЕКТ`, the task and recent task updates before every command and uses the desktop employee setting as `AUTHOR`. It does not use chat history as project state.
 
 ## Resilience
 
@@ -98,13 +100,15 @@ npx tsc --noEmit
 npm run build
 ```
 
-The acceptance suite covers current-task selection, gate-based progress, task potential, scope and forecast changes, waiting work, data gaps, snapshot fallback, factual graph construction, the read-only Google contract, and GPT context isolation.
+The acceptance suite covers current-task selection, gate-based progress, task potential, scope and forecast changes, waiting work, data gaps, snapshot fallback, factual graph construction, GPT context isolation, the no-local-mock command contract, and work-session/Pomodoro timing.
 
 ## Desktop App
 
 The Tauri desktop app reuses the same React screens and progress engine as the browser dashboard. It stores the employee name and access code in the operating-system application-data folder; the code is not embedded in the installer.
 
 On first launch the employee enters their name and shared access code. Name matching is case-insensitive and must resolve to a real row in `PEOPLE`; the app never falls back to another employee. The app then enables system startup, opens as a `520 x 260` widget inside a `540 x 280` frameless window, refreshes live data every minute, and remains available from the tray when closed. The expand button turns the same window into the `1440 x 900` full dashboard; `Свернуть виджет` returns it to widget mode. The pin button and the tray action toggle always-on-top on both macOS and Windows.
+
+`Начать` sends an acceptance command to GPT and expects `IN_PROGRESS` after verified Sheets write. `Отклонить`, `Застрял`, `Жду`, and `Готово` require an employee comment. `Работаю` creates a persistent local work session; it can be paused, resumed, closed with a handoff comment, and can run a 25- or 50-minute Pomodoro visible in the compact widget.
 
 The tray icon is static on macOS and Windows.
 

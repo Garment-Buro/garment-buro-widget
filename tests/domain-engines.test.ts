@@ -206,6 +206,28 @@ test("17. browser code never reads OPENAI_API_KEY", async () => {
   assert.doesNotMatch(dashboardCode, /OPENAI_API_KEY/);
 });
 
+test("17a. task actions use the GPT write command instead of a local mock", async () => {
+  const serviceCode = await readFile(new URL("../lib/services/task-action-service.ts", import.meta.url), "utf8");
+  const dashboardCode = await readFile(new URL("../components/dashboard-client.tsx", import.meta.url), "utf8");
+  assert.match(serviceCode, /task-command/);
+  assert.doesNotMatch(serviceCode, /saveTaskActionMock|mock-/);
+  assert.doesNotMatch(dashboardCode, /localTaskSignals|saveTaskActionMock/);
+  assert.match(dashboardCode, /Отправить в GPT/);
+});
+
+test("17b. Apps Script recovers partial writes before marking a session SYNCED", async () => {
+  const gatewayCode = await readFile(new URL("../apps-script/task-commands.gs", import.meta.url), "utf8");
+  const recoveryStart = gatewayCode.indexOf("function recoverCommandWrite_");
+  const recoveryEnd = gatewayCode.indexOf("function askGptForTaskPlan_", recoveryStart);
+  const recoveryCode = gatewayCode.slice(recoveryStart, recoveryEnd);
+
+  assert.match(gatewayCode, /WIDGET_PLAN:/);
+  assert.match(gatewayCode, /updateIdForCommand_/);
+  assert.doesNotMatch(gatewayCode, /"ACTION_ID"/);
+  assert.ok(recoveryCode.indexOf("verifyCommandWrite_") < recoveryCode.indexOf('"SYNCED"'));
+  assert.match(gatewayCode, /requestedSession\.SYNC_STATUS === "SYNCED"/);
+});
+
 test("18. dashboard person selection is case-insensitive and never falls back to another employee", () => {
   const upperNikita = person({ id: "P-NIKITA", name: "НИКИТА" });
   const known = buildDashboardDomain({

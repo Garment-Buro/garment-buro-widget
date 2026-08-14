@@ -1,12 +1,12 @@
 {
   "name": "garment-buro-project-control",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "lint": "next lint",
-    "test:acceptance": "node --experimental-strip-types --test tests/domain-engines.test.ts",
+    "test:acceptance": "node --experimental-strip-types --test tests/*.test.ts",
     "desktop:dev": "vite --config vite.desktop.config.ts --host 127.0.0.1 --port 1420",
     "desktop:build": "vite build --config vite.desktop.config.ts",
     "desktop": "tauri dev",

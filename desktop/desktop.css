@@ -69,6 +69,13 @@ html.desktop-widget-mode .widget-header button {
   height: 24px;
 }
 
+html.desktop-widget-mode .widget-header .widget-session-pill {
+  width: auto;
+  max-width: 150px;
+  padding: 0 7px;
+  font-size: 8px;
+}
+
 html.desktop-widget-mode .widget-header svg {
   width: 14px;
   height: 14px;

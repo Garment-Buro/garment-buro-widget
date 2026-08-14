@@ -140,6 +140,7 @@ export function DesktopApp() {
           initialState={state}
           loadState={loadState}
           onExit={collapseDashboard}
+          accessToken={settings.accessToken}
           isAlwaysOnTop={isAlwaysOnTop}
           onToggleAlwaysOnTop={toggleAlwaysOnTop}
         />

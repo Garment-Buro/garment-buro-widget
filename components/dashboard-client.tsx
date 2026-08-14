@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   ArrowRight,
   BarChart3,
+  Ban,
   CalendarDays,
   Check,
   ChevronLeft,
@@ -13,7 +14,6 @@ import {
   Clock3,
   Cloud,
   FileText,
-  FilePlus2,
   Filter,
   Flag,
   Focus,
@@ -24,6 +24,7 @@ import {
   LockKeyhole,
   Maximize2,
   Minus,
+  Pause,
   Pin,
   PinOff,
   Play,
@@ -32,8 +33,10 @@ import {
   Settings,
   Shirt,
   Sparkles,
+  Square,
   Star,
   Target,
+  Timer,
   Truck,
   UserRound,
   UsersRound,
@@ -49,16 +52,18 @@ import { formatDate } from "@/lib/date";
 import { buildDependencySummary } from "@/lib/domain/dependency-engine";
 import { calculateProgress } from "@/lib/domain/progress-engine";
 import { buildTaskRelationshipFocus, tasksInPersonalRelationshipView } from "@/lib/domain/task-relationship";
-import { buildPersonalTaskQueue, isTaskPausedForPerson, type LocalTaskSignal } from "@/lib/domain/task-queue";
+import { buildPersonalTaskQueue, isTaskPausedForPerson } from "@/lib/domain/task-queue";
+import { formatTimer } from "@/lib/domain/work-session";
 import { personAsset, samePerson } from "@/lib/person-assets";
 import { rewardTierForPercent } from "@/lib/reward-tier";
 import {
-  requestTaskActionHelp,
-  requestTaskAssistant,
-  saveTaskActionMock,
+  createCommandId,
+  submitTaskCommand,
   type TaskActionIntent,
+  type TaskActionSaveResult,
   type TaskActionSubmission
 } from "@/lib/services/task-action-service";
+import { useWorkSession } from "@/lib/use-work-session";
 import type { DashboardState, DependencySummary, Person, ProgressGate, Task } from "@/lib/types";
 
 export type { TaskActionSubmission } from "@/lib/services/task-action-service";
@@ -68,21 +73,16 @@ const completedStatuses = new Set(["DONE", "CANCELLED"]);
 type WorkspaceView = "personal" | "tree";
 type TreeViewMode = "all" | "personal";
 type IconComponent = LucideIcon;
-type TaskActionConfirmation = "idle" | "saving" | "success";
-type BlockerOutcome = "helped" | "blocked";
+type TaskActionConfirmation = "idle" | "saving" | "success" | "error";
 
 type TaskActionDraft = {
   note: string;
   nextCheckDate: string;
-  blockerOutcome: BlockerOutcome | null;
-  doneConfirmed: boolean;
 };
 
 const emptyTaskActionDraft = (): TaskActionDraft => ({
   note: "",
-  nextCheckDate: "",
-  blockerOutcome: null,
-  doneConfirmed: false
+  nextCheckDate: ""
 });
 
 type LaneDefinition = {
@@ -136,13 +136,15 @@ export function DashboardClient({
   loadState,
   onExit,
   onConfirmTaskAction,
+  accessToken,
   isAlwaysOnTop,
   onToggleAlwaysOnTop
 }: {
   initialState: DashboardState;
   loadState?: () => Promise<DashboardState>;
   onExit?: () => void;
-  onConfirmTaskAction?: (submission: TaskActionSubmission) => Promise<void>;
+  onConfirmTaskAction?: (submission: TaskActionSubmission) => Promise<TaskActionSaveResult | undefined>;
+  accessToken?: string;
   isAlwaysOnTop?: boolean;
   onToggleAlwaysOnTop?: () => void;
 }) {
@@ -150,7 +152,6 @@ export function DashboardClient({
   const [view, setView] = useState<WorkspaceView>("personal");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [focusedTaskId, setFocusedTaskId] = useState("");
-  const [localTaskSignals, setLocalTaskSignals] = useState<Record<string, LocalTaskSignal>>({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [treeSearch, setTreeSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
@@ -180,13 +181,10 @@ export function DashboardClient({
   }, [refresh]);
 
   const person = state.person;
-  const effectiveTasks = useMemo(
-    () => state.tasks.map((task) => localTaskSignals[task.id] === "done" ? { ...task, status: "DONE" } : task),
-    [localTaskSignals, state.tasks]
-  );
+  const effectiveTasks = state.tasks;
   const taskQueue = useMemo(
-    () => person ? buildPersonalTaskQueue(effectiveTasks, person.name, localTaskSignals) : [],
-    [effectiveTasks, localTaskSignals, person]
+    () => person ? buildPersonalTaskQueue(effectiveTasks, person.name, {}) : [],
+    [effectiveTasks, person]
   );
   const currentTask = taskQueue.find((task) => task.id === focusedTaskId) || taskQueue[0] || state.currentTask;
   const ownedTasks = effectiveTasks.filter((task) => task.owner === person?.name && !completedStatuses.has(task.status));
@@ -224,22 +222,12 @@ export function DashboardClient({
   }, [focusedTaskId, taskQueue]);
 
   const confirmTaskAction = useCallback(async (submission: TaskActionSubmission) => {
-    if (onConfirmTaskAction) await onConfirmTaskAction(submission);
-    else await saveTaskActionMock(submission);
-
-    const queueIndex = taskQueue.findIndex((task) => task.id === submission.taskId);
-    const nextTask = taskQueue[queueIndex + 1];
-    const shouldAdvance = submission.intent === "done"
-      || submission.intent === "waiting"
-      || (submission.intent === "stuck" && submission.details.blockerOutcome === "blocked");
-    const signal = submission.intent === "stuck" && submission.details.blockerOutcome === "helped"
-      ? "fact"
-      : submission.intent;
-
-    setLocalTaskSignals((signals) => ({ ...signals, [submission.taskId]: signal }));
-    if (submission.intent === "done") setFocusedTaskId("");
-    else if (shouldAdvance && nextTask) setFocusedTaskId(nextTask.id);
-  }, [onConfirmTaskAction, taskQueue]);
+    let result: TaskActionSaveResult | undefined;
+    if (onConfirmTaskAction) result = await onConfirmTaskAction(submission);
+    else result = await submitTaskCommand(submission, state, accessToken);
+    await refresh();
+    return result;
+  }, [accessToken, onConfirmTaskAction, refresh, state]);
 
   if (!person || !currentTask) {
     return (
@@ -259,7 +247,6 @@ export function DashboardClient({
           person={person}
           currentTask={currentTask}
           taskQueue={taskQueue}
-          localTaskSignals={localTaskSignals}
           dependencies={focusedDependencies}
           focusedProgress={focusedProgress}
           downstream={downstream}
@@ -314,7 +301,6 @@ function PersonalWorkspace({
   person,
   currentTask,
   taskQueue,
-  localTaskSignals,
   dependencies,
   focusedProgress,
   directUnlocks,
@@ -337,7 +323,6 @@ function PersonalWorkspace({
   person: Person;
   currentTask: Task;
   taskQueue: Task[];
-  localTaskSignals: Record<string, LocalTaskSignal>;
   dependencies: DependencySummary;
   focusedProgress: DashboardState["progress"];
   downstream: Task[];
@@ -353,15 +338,16 @@ function PersonalWorkspace({
   onOpenTask: (task: Task) => void;
   onFocusTask: (taskId: string) => void;
   onExit: () => void;
-  onConfirmTaskAction?: (submission: TaskActionSubmission) => Promise<void>;
+  onConfirmTaskAction: (submission: TaskActionSubmission) => Promise<TaskActionSaveResult | undefined>;
   isAlwaysOnTop?: boolean;
   onToggleAlwaysOnTop?: () => void;
 }) {
   const [taskAction, setTaskAction] = useState<TaskActionIntent | null>(null);
   const [taskActionDraft, setTaskActionDraft] = useState<TaskActionDraft>(emptyTaskActionDraft);
-  const [assistantReply, setAssistantReply] = useState("");
-  const [isRequestingHelp, setIsRequestingHelp] = useState(false);
   const [confirmation, setConfirmation] = useState<TaskActionConfirmation>("idle");
+  const [commandFeedback, setCommandFeedback] = useState("");
+  const workSession = useWorkSession(person.id);
+  const activeSession = workSession.session?.taskId === currentTask.id ? workSession.session : null;
   const goal = state.goal;
   const waitingOwners = unique(directUnlocks.map((task) => task.owner).filter((owner) => owner && owner !== person.name));
   const handoffLabel = currentTask.deadline ? `Срок ${shortDate(currentTask.deadline)}` : "Срок не задан";
@@ -380,27 +366,30 @@ function PersonalWorkspace({
   const eventDate = eventTask.nextCheckDate || eventTask.deadline;
   const nextAction = relatedIssue?.nextAction || taskContext?.handoffResult || currentTask.expectedResult;
   const actionPreview = buildTaskActionPreview(taskAction, taskActionDraft, currentTask);
+  const canAcceptTask = ["BACKLOG", "READY"].includes(currentTask.status);
+  const canStartSession = currentTask.status === "IN_PROGRESS" && !activeSession;
   const actionNote = confirmation === "saving"
-    ? "Фиксируем выбранное состояние задачи."
+    ? "Отправляем команду в GPT и ждём обновления Google Sheets."
     : confirmation === "success"
-      ? "Состояние подтверждено локально. Запись в Google Drive подключим следующим этапом."
+      ? commandFeedback || "GPT зафиксировала изменение, данные перечитаны из Google Sheets."
+      : confirmation === "error"
+        ? commandFeedback || "GPT не смогла зафиксировать изменение. Повторите попытку."
       : actionPreview
-        ? "Проверьте preview и подтвердите фиксацию."
+        ? "Комментарий будет отправлен в GPT вместе с контекстом задачи."
         : taskAction
-          ? "Заполните короткую форму выбранного действия."
-          : "Выберите быстрое действие, если состояние задачи изменилось.";
+          ? "Добавьте короткий контекст для GPT."
+          : "Все изменения задачи фиксирует GPT в Google Sheets.";
 
   useEffect(() => {
     if (confirmation !== "success") return;
-    const timer = window.setTimeout(() => setConfirmation("idle"), 1_800);
+    const timer = window.setTimeout(() => setConfirmation("idle"), 3_000);
     return () => window.clearTimeout(timer);
   }, [confirmation]);
 
   useEffect(() => {
     setTaskAction(null);
     setTaskActionDraft(emptyTaskActionDraft());
-    setAssistantReply("");
-    setIsRequestingHelp(false);
+    setCommandFeedback("");
     setConfirmation("idle");
   }, [currentTask.id]);
 
@@ -408,10 +397,9 @@ function PersonalWorkspace({
     if (confirmation === "saving") return;
     if (intent !== taskAction) {
       setTaskActionDraft(emptyTaskActionDraft());
-      setAssistantReply("");
-      setIsRequestingHelp(false);
     }
     setTaskAction(intent);
+    setCommandFeedback("");
     setConfirmation("idle");
   }
 
@@ -419,49 +407,79 @@ function PersonalWorkspace({
     if (confirmation === "saving") return;
     setTaskAction(null);
     setTaskActionDraft(emptyTaskActionDraft());
-    setAssistantReply("");
   }
 
-  async function requestBlockerHelp() {
-    if (!taskActionDraft.note.trim() || isRequestingHelp) return;
-    setIsRequestingHelp(true);
-    setAssistantReply("");
-    setTaskActionDraft((draft) => ({ ...draft, blockerOutcome: null }));
+  async function sendCommand(submission: TaskActionSubmission) {
+    setConfirmation("saving");
+    setCommandFeedback("");
     try {
-      setAssistantReply(await requestTaskActionHelp(currentTask.id, taskActionDraft.note, state));
+      const result = await onConfirmTaskAction(submission);
+      setCommandFeedback(result?.assistantMessage || "Команда принята GPT и синхронизирована.");
+      setConfirmation("success");
+      return result;
     } catch (error) {
-      setAssistantReply(error instanceof Error ? error.message : "Не удалось получить подсказку GPT.");
-    } finally {
-      setIsRequestingHelp(false);
+      setCommandFeedback(error instanceof Error ? error.message : "Не удалось отправить команду GPT.");
+      setConfirmation("error");
+      throw error;
     }
+  }
+
+  async function acceptTask() {
+    if (confirmation === "saving") return;
+    await sendCommand({
+      commandId: createCommandId("ACCEPT"),
+      taskId: currentTask.id,
+      intent: "accept",
+      details: { note: `Я принял задачу ${currentTask.id} «${currentTask.title}» и начинаю работу.` },
+      preview: `Принять ${currentTask.id} и изменить статус на IN_PROGRESS.`
+    }).catch(() => undefined);
+  }
+
+  async function startWorkingSession() {
+    if (confirmation === "saving" || activeSession) return;
+    const sessionId = createCommandId("SESSION");
+    const result = await sendCommand({
+      commandId: createCommandId("SESSION-START"),
+      taskId: currentTask.id,
+      intent: "session_start",
+      details: {
+        note: `Я начал рабочую сессию по задаче ${currentTask.id} «${currentTask.title}».`,
+        sessionId,
+        sessionStartedAt: new Date().toISOString()
+      },
+      preview: `Начать рабочую сессию ${sessionId} по ${currentTask.id}.`
+    }).catch(() => undefined);
+    if (result) workSession.start(currentTask.id, result.sessionId || sessionId);
   }
 
   async function confirmTaskAction() {
     if (!taskAction || !actionPreview || confirmation === "saving") return;
     const submission: TaskActionSubmission = {
+      commandId: createCommandId(taskAction.toUpperCase()),
       taskId: currentTask.id,
       intent: taskAction,
       details: {
         note: taskActionDraft.note.trim(),
         nextCheckDate: taskActionDraft.nextCheckDate || undefined,
-        blockerOutcome: taskActionDraft.blockerOutcome || undefined,
-        acceptanceCriteria: taskAction === "done" ? currentTask.acceptanceCriteria || currentTask.expectedResult : undefined
+        acceptanceCriteria: taskAction === "done" ? currentTask.acceptanceCriteria || currentTask.expectedResult : undefined,
+        sessionId: taskAction === "session_close" ? activeSession?.id : undefined,
+        sessionStartedAt: taskAction === "session_close" && activeSession
+          ? new Date(activeSession.startedAt).toISOString()
+          : undefined,
+        sessionDurationSeconds: taskAction === "session_close"
+          ? Math.round(workSession.elapsedMs / 1000)
+          : undefined,
+        pomodoroCompleted: taskAction === "session_close"
+          ? activeSession?.pomodoro?.completedCount || 0
+          : undefined
       },
       preview: actionPreview
     };
-    setConfirmation("saving");
-    try {
-      if (onConfirmTaskAction) {
-        await onConfirmTaskAction(submission);
-      } else {
-        await saveTaskActionMock(submission);
-      }
+    const result = await sendCommand(submission).catch(() => undefined);
+    if (result) {
       setTaskAction(null);
       setTaskActionDraft(emptyTaskActionDraft());
-      setAssistantReply("");
-      setConfirmation("success");
-    } catch {
-      setConfirmation("idle");
+      if (taskAction === "session_close") workSession.close();
     }
   }
 
@@ -540,11 +558,53 @@ function PersonalWorkspace({
             </div>
 
             <aside className="task-action-panel">
-              <button className="primary-task-action" type="button" onClick={() => onOpenTask(currentTask)}><Play size={22} /><span>{currentTask.status === "IN_PROGRESS" ? "Продолжить" : "Начать"}</span></button>
+              <button
+                className="primary-task-action"
+                type="button"
+                disabled={confirmation === "saving" || (!canAcceptTask && !canStartSession)}
+                onClick={() => { void (canAcceptTask ? acceptTask() : startWorkingSession()); }}
+              >
+                <Play size={22} />
+                <span>{canAcceptTask ? "Начать" : activeSession ? "Сессия идёт" : currentTask.status === "IN_PROGRESS" ? "Работаю" : statusLabel(currentTask.status)}</span>
+              </button>
+
+              {activeSession ? (
+                <section className="work-session-card" aria-label="Активная рабочая сессия">
+                  <header>
+                    <span><Timer size={16} />Рабочая сессия</span>
+                    <strong>{formatTimer(workSession.elapsedMs)}</strong>
+                  </header>
+                  <div className="work-session-actions">
+                    <button type="button" onClick={activeSession.status === "active" ? workSession.pause : workSession.resume}>
+                      {activeSession.status === "active" ? <Pause size={14} /> : <Play size={14} />}
+                      {activeSession.status === "active" ? "Пауза" : "Продолжить"}
+                    </button>
+                    <button type="button" onClick={() => selectTaskAction("session_close")}><Square size={13} />Закрыть</button>
+                  </div>
+                  <div className="pomodoro-control">
+                    <span><Timer size={14} />Pomodoro</span>
+                    {activeSession.pomodoro ? (
+                      <>
+                        <strong>{formatTimer(workSession.pomodoroRemainingMs)}</strong>
+                        {activeSession.pomodoro.status === "running" ? (
+                          <button type="button" onClick={workSession.pausePomodoro}>Пауза</button>
+                        ) : activeSession.pomodoro.status === "paused" ? (
+                          <button type="button" onClick={workSession.resumePomodoro}>Продолжить</button>
+                        ) : (
+                          <button type="button" onClick={() => workSession.startPomodoro(activeSession.pomodoro?.durationMinutes || 25)}>Ещё</button>
+                        )}
+                      </>
+                    ) : (
+                      <div><button type="button" onClick={() => workSession.startPomodoro(25)}>25 мин</button><button type="button" onClick={() => workSession.startPomodoro(50)}>50 мин</button></div>
+                    )}
+                  </div>
+                </section>
+              ) : null}
+
               <div className="task-action-grid">
+                <TaskActionButton icon={Ban} label="Отклонить" active={taskAction === "reject"} disabled={confirmation === "saving"} onClick={() => selectTaskAction("reject")} />
                 <TaskActionButton icon={CircleHelp} label="Застрял" active={taskAction === "stuck"} disabled={confirmation === "saving"} onClick={() => selectTaskAction("stuck")} />
                 <TaskActionButton icon={Clock3} label="Жду" active={taskAction === "waiting"} disabled={confirmation === "saving"} onClick={() => selectTaskAction("waiting")} />
-                <TaskActionButton icon={FilePlus2} label="Новый факт" active={taskAction === "fact"} disabled={confirmation === "saving"} onClick={() => selectTaskAction("fact")} />
                 <TaskActionButton icon={Check} label="Готово" active={taskAction === "done"} disabled={confirmation === "saving"} success onClick={() => selectTaskAction("done")} />
               </div>
               {taskAction ? (
@@ -552,20 +612,13 @@ function PersonalWorkspace({
                   intent={taskAction}
                   draft={taskActionDraft}
                   acceptanceCriteria={currentTask.acceptanceCriteria || currentTask.expectedResult}
-                  assistantReply={assistantReply}
-                  isRequestingHelp={isRequestingHelp}
                   preview={actionPreview}
                   onDraftChange={setTaskActionDraft}
-                  onRequestHelp={() => { void requestBlockerHelp(); }}
                   onClose={closeTaskAction}
-                  onContinue={() => {
-                    closeTaskAction();
-                    onOpenTask(currentTask);
-                  }}
                 />
               ) : null}
-              <div className={`assistant-note ${confirmation === "success" ? "is-success" : ""}`} aria-live="polite">
-                {confirmation === "success" ? <Check size={19} /> : <Sparkles size={19} />}
+              <div className={`assistant-note ${confirmation === "success" ? "is-success" : ""} ${confirmation === "error" ? "is-error" : ""}`} aria-live="polite">
+                {confirmation === "success" ? <Check size={19} /> : confirmation === "error" ? <AlertTriangle size={19} /> : <Sparkles size={19} />}
                 <p>{actionNote}</p>
               </div>
               <button
@@ -575,7 +628,7 @@ function PersonalWorkspace({
                 onClick={() => { void confirmTaskAction(); }}
               >
                 {confirmation === "saving" ? <RefreshCw className="spin" size={17} /> : confirmation === "success" ? <Check size={17} /> : null}
-                <span>{confirmation === "saving" ? "Фиксируем" : confirmation === "success" ? onConfirmTaskAction ? "Зафиксировано" : "Подтверждено" : "Зафиксировать"}</span>
+                <span>{confirmation === "saving" ? "Отправляем в GPT" : confirmation === "success" ? "Синхронизировано" : "Отправить в GPT"}</span>
               </button>
             </aside>
           </article>
@@ -587,7 +640,7 @@ function PersonalWorkspace({
 
         <div className="task-position" aria-label="Положение задачи в очереди">
           {taskQueue.map((task, index) => {
-            const paused = isTaskPausedForPerson(task, localTaskSignals, person.name);
+            const paused = isTaskPausedForPerson(task, {}, person.name);
             return (
               <button
                 key={task.id}
@@ -925,24 +978,16 @@ function TaskActionPopover({
   intent,
   draft,
   acceptanceCriteria,
-  assistantReply,
-  isRequestingHelp,
   preview,
   onDraftChange,
-  onRequestHelp,
-  onClose,
-  onContinue
+  onClose
 }: {
   intent: TaskActionIntent;
   draft: TaskActionDraft;
   acceptanceCriteria: string;
-  assistantReply: string;
-  isRequestingHelp: boolean;
   preview: string;
   onDraftChange: (draft: TaskActionDraft) => void;
-  onRequestHelp: () => void;
   onClose: () => void;
-  onContinue: () => void;
 }) {
   const updateDraft = (patch: Partial<TaskActionDraft>) => onDraftChange({ ...draft, ...patch });
 
@@ -953,24 +998,17 @@ function TaskActionPopover({
         <button type="button" onClick={onClose} aria-label="Закрыть" title="Закрыть"><X size={16} /></button>
       </header>
 
+      {intent === "reject" ? (
+        <div className="action-popover-body">
+          <label>Почему вы отклоняете задачу?</label>
+          <textarea autoFocus rows={3} value={draft.note} onChange={(event) => updateDraft({ note: event.target.value })} placeholder="Коротко объясните причину для GPT" />
+        </div>
+      ) : null}
+
       {intent === "stuck" ? (
         <div className="action-popover-body">
           <label>Что мешает продолжить?</label>
-          <textarea autoFocus rows={2} value={draft.note} onChange={(event) => {
-            updateDraft({ note: event.target.value, blockerOutcome: null });
-          }} placeholder="Одна конкретная помеха" />
-          <button className="popover-helper-button" type="button" disabled={!draft.note.trim() || isRequestingHelp} onClick={onRequestHelp}>
-            <Sparkles size={15} /><span>{isRequestingHelp ? "Ищу следующий шаг" : "Получить короткую подсказку"}</span>
-          </button>
-          {assistantReply ? (
-            <div className="popover-assistant-reply"><Sparkles size={15} /><p>{assistantReply}</p></div>
-          ) : null}
-          {assistantReply ? (
-            <div className="popover-choice-row" aria-label="Результат подсказки">
-              <button className={draft.blockerOutcome === "helped" ? "is-selected" : ""} type="button" onClick={() => updateDraft({ blockerOutcome: "helped" })}>Помогло</button>
-              <button className={draft.blockerOutcome === "blocked" ? "is-selected" : ""} type="button" onClick={() => updateDraft({ blockerOutcome: "blocked" })}>Всё ещё блокирует</button>
-            </div>
-          ) : null}
+          <textarea autoFocus rows={3} value={draft.note} onChange={(event) => updateDraft({ note: event.target.value })} placeholder="Опишите конкретный внутренний блокер" />
         </div>
       ) : null}
 
@@ -983,26 +1021,24 @@ function TaskActionPopover({
         </div>
       ) : null}
 
-      {intent === "fact" ? (
-        <div className="action-popover-body">
-          <label>Что изменилось?</label>
-          <textarea autoFocus rows={3} value={draft.note} onChange={(event) => updateDraft({ note: event.target.value })} placeholder="Один новый значимый факт" />
-        </div>
-      ) : null}
-
       {intent === "done" ? (
         <div className="action-popover-body">
           <label>Критерий готовности</label>
           <p className="popover-criteria"><Check size={15} />{acceptanceCriteria || "Результат задачи готов к передаче."}</p>
-          <div className="popover-choice-row is-confirmation" aria-label="Подтверждение готовности">
-            <button className={draft.doneConfirmed ? "is-selected" : ""} type="button" onClick={() => updateDraft({ doneConfirmed: true })}>Да, готово</button>
-            <button type="button" onClick={onContinue}>Нет, продолжить</button>
-          </div>
+          <label>Что сделано и где результат?</label>
+          <textarea autoFocus rows={3} value={draft.note} onChange={(event) => updateDraft({ note: event.target.value })} placeholder="Опишите результат и evidence для GPT" />
+        </div>
+      ) : null}
+
+      {intent === "session_close" ? (
+        <div className="action-popover-body">
+          <label>На чём закончили рабочую сессию?</label>
+          <textarea autoFocus rows={4} value={draft.note} onChange={(event) => updateDraft({ note: event.target.value })} placeholder="Что сделано, что осталось и какой следующий шаг" />
         </div>
       ) : null}
 
       <div className={`task-action-preview ${preview ? "is-ready" : ""}`} aria-live="polite">
-        <small>Будет зафиксировано</small>
+        <small>Будет отправлено в GPT</small>
         <p>{preview || previewHint(intent)}</p>
       </div>
     </section>
@@ -1125,34 +1161,33 @@ function formatPercent(value: number) {
 }
 
 function taskActionLabel(action: TaskActionIntent) {
+  if (action === "reject") return "Отклонить";
   if (action === "stuck") return "Застрял";
   if (action === "waiting") return "Жду";
-  if (action === "fact") return "Новый факт";
+  if (action === "session_close") return "Закрыть сессию";
   return "Готово";
 }
 
 function buildTaskActionPreview(action: TaskActionIntent | null, draft: TaskActionDraft, task: Task) {
   const note = draft.note.trim();
   if (!action) return "";
-  if (action === "stuck") {
-    if (!note || !draft.blockerOutcome) return "";
-    return `Блокер: ${note}. ${draft.blockerOutcome === "helped" ? "Подсказка помогла" : "Всё ещё блокирует"}.`;
-  }
+  if (action === "reject") return note ? `Отклонение ${task.id}: ${note}.` : "";
+  if (action === "stuck") return note ? `Внутренний блокер по ${task.id}: ${note}.` : "";
   if (action === "waiting") {
     if (!note) return "";
     const nextCheck = draft.nextCheckDate ? ` Следующая проверка: ${formatDate(draft.nextCheckDate)}.` : "";
     return `Ожидание: ${note}.${nextCheck}`;
   }
-  if (action === "fact") return note ? `Новый факт: ${note}.` : "";
-  if (!draft.doneConfirmed) return "";
-  return `Готово: критерий задачи «${task.acceptanceCriteria || task.expectedResult}» подтверждён.`;
+  if (action === "session_close") return note ? `Закрытие рабочей сессии: ${note}.` : "";
+  return note ? `Результат по ${task.id}: ${note}. GPT должна проверить критерий «${task.acceptanceCriteria || task.expectedResult}».` : "";
 }
 
 function previewHint(action: TaskActionIntent) {
-  if (action === "stuck") return "Опишите помеху, получите подсказку и отметьте результат.";
+  if (action === "reject") return "Объясните GPT, почему задача не должна быть принята вами.";
+  if (action === "stuck") return "Опишите конкретный внутренний блокер.";
   if (action === "waiting") return "Укажите, кого или что ждём.";
-  if (action === "fact") return "Коротко укажите новый факт.";
-  return "Подтвердите соответствие критерию готовности.";
+  if (action === "session_close") return "Кратко зафиксируйте результат, остаток и следующий шаг.";
+  return "Опишите сделанный результат и evidence для проверки GPT.";
 }
 
 function taskWord(count: number) {
@@ -1267,77 +1302,8 @@ function TaskDrawer({
         <DrawerField label="Следующая проверка" value={formatDate(task.nextCheckDate)} />
         <DrawerField label="Срок" value={formatDate(task.deadline)} />
         <DrawerField label="Источник" value={task.source || "—"} />
-        <TaskAssistantPanel task={task} state={state} />
       </aside>
     </>
-  );
-}
-
-function TaskAssistantPanel({ task, state }: { task: Task; state: DashboardState }) {
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [error, setError] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [sourceNote, setSourceNote] = useState("");
-
-  useEffect(() => {
-    setQuestion("");
-    setAnswer("");
-    setError("");
-    setSourceNote("");
-    setIsLoading(false);
-  }, [task.id]);
-
-  async function ask(mode: "start" | "ask" | "acceptance") {
-    if (isLoading || (mode === "ask" && !question.trim())) return;
-    setIsLoading(true);
-    setAnswer("");
-    setError("");
-    setSourceNote("");
-    try {
-      const response = await requestTaskAssistant({
-        taskId: task.id,
-        mode,
-        message: mode === "ask" ? question.trim() : undefined
-      }, state);
-      setAnswer(response.answer);
-      const warning = response.warnings[0];
-      setSourceNote(warning || `Сверено с Google Drive · ${response.model}`);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Не удалось получить ответ GPT.");
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  return (
-    <section className="drawer-assistant" aria-label="GPT-навигатор по задаче">
-      <header>
-        <div><span>GPT-навигатор</span><strong>Работа с текущими данными</strong></div>
-        <Sparkles size={19} />
-      </header>
-      <p>Перед ответом читаем актуальный мастер‑промпт, задачу, контекст, playbook и последние события из Google Drive.</p>
-      <div className="drawer-assistant-actions">
-        <button type="button" disabled={isLoading} onClick={() => { void ask("start"); }}>Как начать</button>
-        <button type="button" disabled={isLoading} onClick={() => { void ask("acceptance"); }}>Проверить готовность</button>
-      </div>
-      <form onSubmit={(event) => { event.preventDefault(); void ask("ask"); }}>
-        <textarea
-          rows={3}
-          value={question}
-          onChange={(event) => setQuestion(event.target.value)}
-          placeholder="Спросить GPT по этой задаче"
-          maxLength={4000}
-        />
-        <button type="submit" disabled={isLoading || !question.trim()}>
-          {isLoading ? <RefreshCw className="spin" size={15} /> : <ArrowRight size={15} />}
-          {isLoading ? "Сверяю данные" : "Спросить"}
-        </button>
-      </form>
-      {answer ? <div className="drawer-assistant-answer"><Sparkles size={16} /><p>{answer}</p></div> : null}
-      {error ? <div className="drawer-assistant-error"><AlertTriangle size={16} /><p>{error}</p></div> : null}
-      {sourceNote ? <small>{sourceNote}</small> : null}
-    </section>
   );
 }
 
