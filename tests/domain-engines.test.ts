@@ -263,6 +263,11 @@ test("17c. widget backend rebuilds trusted context and accepts only verified gat
   assert.doesNotMatch(desktopCode, /NOTIFICATIONS_SHEET_GID/);
   assert.match(desktopCode, /syncStatus/);
   assert.match(desktopCode, /ack_notification/);
+  assert.match(desktopCode, /text\/plain;charset=utf-8/);
+  assert.match(desktopCode, /for attempt in 0\.\.3/);
+  assert.match(desktopCode, /for _redirect_hop in 0\.\.5/);
+  assert.match(desktopCode, /StatusCode::NOT_FOUND/);
+  assert.match(desktopCode, /redirect\(reqwest::redirect::Policy::none\(\)\)/);
 });
 
 test("17d. private Drive context uses server credentials and task-scoped retrieval", async () => {

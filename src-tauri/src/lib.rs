@@ -8,7 +8,7 @@ use tauri::{
   AppHandle, Emitter, LogicalSize, Manager, Size, WindowEvent,
 };
 
-const DATA_ENDPOINT: &str = "https://script.google.com/macros/s/AKfycbyB3cZ89j5u8r9HVfTcHyZ-3HCYXQCNHXn6mr5TU9NgiGHxyeZbOk1KTiBHpi4M-ZlGYg/exec";
+const DATA_ENDPOINT: &str = "https://script.google.com/macros/s/AKfycbyWXIT68T48YeWFwQ5MvVjrfBAsLBoEbgVb1jIQ3F_Iwf-o53afxL_KUYQeseSXS8bsTw/exec";
 const EXECUTION_SHEET_ID: &str = "1LfhEpCwKrWTww8SvTUVrIofX1bJ1QmU0m7gbruZB0Qg";
 const MASTER_PROMPT_DOCUMENT_ID: &str = "1_EBiiqM_7c0FxpXbmfZpAg1-POaftWRm26EIvSflwJk";
 const WIDGET_BRIEF_DOCUMENT_ID: &str = "1PKxVgMn7NyL0Kn55WPsODdMK8Fu_IibHsnH5Nv3A0u8";
@@ -27,29 +27,56 @@ async fn post_apps_script_json(
   body: Value,
   error_prefix: &str,
 ) -> Result<reqwest::Response, String> {
-  let response = client
-    .post(endpoint)
-    .json(&body)
-    .send()
-    .await
-    .map_err(|error| format!("{error_prefix}: {error}"))?;
+  for attempt in 0..3 {
+    let response = client
+      .post(endpoint)
+      .header(reqwest::header::CONTENT_TYPE, "text/plain;charset=utf-8")
+      .body(body.to_string())
+      .send()
+      .await
+      .map_err(|error| format!("{error_prefix}: {error}"))?;
 
-  if !response.status().is_redirection() {
-    return Ok(response);
+    if !response.status().is_redirection() {
+      if response.status() != reqwest::StatusCode::NOT_FOUND || attempt == 2 {
+        return Ok(response);
+      }
+      continue;
+    }
+
+    let mut location = response
+      .headers()
+      .get(reqwest::header::LOCATION)
+      .and_then(|value| value.to_str().ok())
+      .filter(|value| !value.trim().is_empty())
+      .ok_or_else(|| format!("{error_prefix}: Apps Script не вернул адрес redirect"))?
+      .to_string();
+    let mut final_response = None;
+    for _redirect_hop in 0..5 {
+      let redirected = client
+        .get(&location)
+        .send()
+        .await
+        .map_err(|error| format!("{error_prefix}: не удалось получить redirect Apps Script: {error}"))?;
+      if !redirected.status().is_redirection() {
+        final_response = Some(redirected);
+        break;
+      }
+      location = redirected
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("{error_prefix}: Apps Script вернул redirect без адреса"))?
+        .to_string();
+    }
+    let redirected = final_response
+      .ok_or_else(|| format!("{error_prefix}: слишком много redirect Apps Script"))?;
+    if redirected.status() != reqwest::StatusCode::NOT_FOUND || attempt == 2 {
+      return Ok(redirected);
+    }
   }
 
-  let location = response
-    .headers()
-    .get(reqwest::header::LOCATION)
-    .and_then(|value| value.to_str().ok())
-    .filter(|value| !value.trim().is_empty())
-    .ok_or_else(|| format!("{error_prefix}: Apps Script не вернул адрес redirect"))?;
-
-  client
-    .get(location)
-    .send()
-    .await
-    .map_err(|error| format!("{error_prefix}: не удалось получить redirect Apps Script: {error}"))
+  Err(format!("{error_prefix}: Apps Script не ответил после повторных запросов"))
 }
 
 #[derive(Deserialize)]
