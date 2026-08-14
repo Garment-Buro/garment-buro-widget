@@ -285,7 +285,9 @@ test("17c. widget backend rebuilds trusted context and accepts only verified gat
   assert.match(desktopCode, /ack_notification/);
   assert.match(desktopCode, /text\/plain;charset=utf-8/);
   assert.match(desktopCode, /for attempt in 0\.\.3/);
-  assert.match(desktopCode, /for _redirect_hop in 0\.\.5/);
+  assert.match(desktopCode, /for _redirect_hop in 0\.\.10/);
+  assert.match(desktopCode, /visited_locations/);
+  assert.match(desktopCode, /continue 'request_attempts/);
   assert.match(desktopCode, /StatusCode::NOT_FOUND/);
   assert.match(desktopCode, /protected dashboard connection/);
   assert.match(desktopCode, /redirect\(reqwest::redirect::Policy::none\(\)\)/);

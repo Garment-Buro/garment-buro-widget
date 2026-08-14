@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{env, path::Path};
+use std::{collections::HashSet, env, path::Path};
 use tauri::{
   image::Image,
   menu::{Menu, MenuItem},
@@ -27,14 +27,17 @@ async fn post_apps_script_json(
   body: Value,
   error_prefix: &str,
 ) -> Result<Value, String> {
-  for attempt in 0..3 {
-    let response = client
+  'request_attempts: for attempt in 0..3 {
+    let response = match client
       .post(endpoint)
       .header(reqwest::header::CONTENT_TYPE, "text/plain;charset=utf-8")
       .body(body.to_string())
       .send()
-      .await
-      .map_err(|error| format!("{error_prefix}: {error}"))?;
+      .await {
+        Ok(response) => response,
+        Err(_) if attempt < 2 => continue,
+        Err(error) => return Err(format!("{error_prefix}: {error}")),
+      };
 
     let final_response = if response.status().is_redirection() {
       let mut location = response
@@ -45,12 +48,19 @@ async fn post_apps_script_json(
         .ok_or_else(|| format!("{error_prefix}: Apps Script не вернул адрес redirect"))?
         .to_string();
       let mut followed_response = None;
-      for _redirect_hop in 0..5 {
-        let redirected = client
+      let mut visited_locations = HashSet::new();
+      for _redirect_hop in 0..10 {
+        if !visited_locations.insert(location.clone()) {
+          break;
+        }
+        let redirected = match client
           .get(&location)
           .send()
-          .await
-          .map_err(|error| format!("{error_prefix}: не удалось получить redirect Apps Script: {error}"))?;
+          .await {
+            Ok(response) => response,
+            Err(_) if attempt < 2 => continue 'request_attempts,
+            Err(error) => return Err(format!("{error_prefix}: не удалось получить redirect Apps Script: {error}")),
+          };
         if !redirected.status().is_redirection() {
           followed_response = Some(redirected);
           break;
@@ -63,12 +73,20 @@ async fn post_apps_script_json(
           .ok_or_else(|| format!("{error_prefix}: Apps Script вернул redirect без адреса"))?
           .to_string();
       }
-      followed_response.ok_or_else(|| format!("{error_prefix}: слишком много redirect Apps Script"))?
+      match followed_response {
+        Some(response) => response,
+        None if attempt < 2 => continue,
+        None => return Err(format!(
+          "{error_prefix}: Google зациклил redirect Apps Script. Повторите запрос; если ошибка останется, проверьте доступ Web app deployment."
+        )),
+      }
     } else {
       response
     };
 
-    if final_response.status() == reqwest::StatusCode::NOT_FOUND && attempt < 2 {
+    if (final_response.status() == reqwest::StatusCode::NOT_FOUND
+      || final_response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+      || final_response.status().is_server_error()) && attempt < 2 {
       continue;
     }
     if !final_response.status().is_success() {
