@@ -15,7 +15,7 @@ for (const name of requiredEnvironment) {
 const config = {
   ACCESS_TOKEN: process.env.APPS_SCRIPT_ACCESS_TOKEN,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-  OPENAI_MODEL: process.env.OPENAI_MODEL || "gpt-5.4-mini",
+  OPENAI_MODEL: process.env.OPENAI_MODEL || "gpt-5.6-terra",
   EXECUTION_SPREADSHEET_ID:
     process.env.GOOGLE_EXECUTION_SPREADSHEET_ID || "1LfhEpCwKrWTww8SvTUVrIofX1bJ1QmU0m7gbruZB0Qg",
   CONTROL_SPREADSHEET_ID:

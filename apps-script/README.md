@@ -38,7 +38,7 @@ Open **Project Settings → Script Properties** and add:
 | `MASTER_PROMPT_DOCUMENT_ID` | Google Doc `00_MASTER PROMPT — ЛИЧНЫЙ ПРОЕКТ` |
 | `DRIVE_ROOT_FOLDER_ID` | Canonical project folder; currently `1X4Qe4giI3mEnPUZTce_Q1aDSCh18P6q_` |
 | `OPENAI_API_KEY` | API key owned by the OpenAI project service account |
-| `OPENAI_MODEL` | Optional; defaults to `gpt-5.4-mini` |
+| `OPENAI_MODEL` | Optional; defaults to `gpt-5.6-terra` |
 
 Never place these values in `.gs` files or commit them. Rotate the access token that was previously pasted into chat, update `.env.local`, and deploy a new Apps Script version.
 
