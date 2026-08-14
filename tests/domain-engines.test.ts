@@ -248,8 +248,14 @@ test("17b. Apps Script recovers partial writes before marking a session SYNCED",
   assert.match(entrypointCode, /capabilities: gatewayCapabilities_/);
   assert.doesNotMatch(entrypointCode, /gb_[a-f0-9]{32,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}/);
   assert.match(gatewayCode, /buildDriveTaskContext_/);
-  assert.match(gatewayCode, /exportGoogleWorkspaceText_\(masterPromptId\)/);
+  assert.match(gatewayCode, /cachedGoogleWorkspaceText_\(masterPromptId\)/);
+  assert.match(gatewayCode, /timings\.openAiMs/);
+  assert.match(gatewayCode, /timings\.verificationMs/);
   assert.match(driveContextCode, /DRIVE_ROOT_FOLDER_ID/);
+  assert.match(driveContextCode, /GB_DRIVE_MAX_SELECTED_ = 4/);
+  assert.match(driveContextCode, /GB_DRIVE_MAX_CONTEXT_CHARS_ = 30000/);
+  assert.match(driveContextCode, /readCachedDriveFileContent_/);
+  assert.match(driveContextCode, /GB_DRIVE_CACHE_SECONDS_ = 900/);
   assert.match(driveContextCode, /\/drive\/v3\/files\//);
   assert.match(driveContextCode, /ScriptApp\.getOAuthToken\(\)/);
   assert.doesNotMatch(`${entrypointCode}\n${gatewayCode}\n${driveContextCode}`, /DocumentApp|SlidesApp/);
@@ -262,10 +268,17 @@ test("17c. widget backend rebuilds trusted context and accepts only verified gat
   const routeCode = await readFile(new URL("../app/api/task-command/route.ts", import.meta.url), "utf8");
   const gatewayClientCode = await readFile(new URL("../lib/services/apps-script-gateway.ts", import.meta.url), "utf8");
   const desktopCode = await readFile(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
+  const dashboardCode = await readFile(new URL("../components/dashboard-client.tsx", import.meta.url), "utf8");
+  const taskActionCode = await readFile(new URL("../lib/services/task-action-service.ts", import.meta.url), "utf8");
 
   assert.match(routeCode, /getDashboardState/);
   assert.match(routeCode, /buildTaskAssistantClientContext/);
   assert.match(routeCode, /result\.syncStatus !== "SYNCED"/);
+  assert.doesNotMatch(routeCode, /buildRelevantDriveContext/);
+  assert.doesNotMatch(dashboardCode, /await refresh\(\)/);
+  assert.match(dashboardCode, /void refresh\(\)\.then/);
+  assert.match(taskActionCode, /clientRequestMs/);
+  assert.match(taskActionCode, /Читаем контекст задачи и Google Drive/);
   assert.match(gatewayClientCode, /APPS_SCRIPT_ACCESS_TOKEN|appsScriptConfig\.accessToken/);
   assert.doesNotMatch(desktopCode, /NOTIFICATIONS_SHEET_GID/);
   assert.match(desktopCode, /syncStatus/);

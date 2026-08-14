@@ -2652,9 +2652,17 @@ input:focus-visible {
   align-items: start;
   gap: 6px;
   margin: 0;
-  color: #a43f33;
   font-size: 9px;
   line-height: 1.4;
+}
+
+.task-action-popover-footer > p.is-error {
+  color: #a43f33;
+}
+
+.task-action-popover-footer > p.task-command-progress {
+  align-items: center;
+  color: #4d4d49;
 }
 
 .assistant-note {

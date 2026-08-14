@@ -6,7 +6,7 @@
  * apps-script/README.md, then deploy a new version after every code change.
  */
 
-var GB_GATEWAY_VERSION_ = "1.1.1";
+var GB_GATEWAY_VERSION_ = "1.2.0";
 
 var GB_EXECUTION_SHEETS_ = {
   goals: "GOALS",

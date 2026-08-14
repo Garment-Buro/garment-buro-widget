@@ -30,6 +30,26 @@ export type TaskActionSaveResult = {
   taskStatus?: string;
   sessionId?: string;
   updatedAt: string;
+  timings?: TaskCommandTimings;
+};
+
+export type TaskCommandTimings = {
+  totalMs?: number;
+  lockWaitMs?: number;
+  sheetsReadMs?: number;
+  masterPromptMs?: number;
+  taskContextMs?: number;
+  driveContextMs?: number;
+  openAiMs?: number;
+  sheetsWriteMs?: number;
+  verificationMs?: number;
+  clientRequestMs?: number;
+  dashboardRefreshMs?: number;
+};
+
+export type TaskCommandProgress = {
+  stage: "connecting" | "context" | "gpt" | "verification";
+  label: string;
 };
 
 export async function requestTaskActionHelp(
@@ -73,7 +93,8 @@ export async function requestTaskAssistant(
 export async function submitTaskCommand(
   submission: TaskActionSubmission,
   state: DashboardState,
-  accessToken?: string
+  accessToken?: string,
+  onProgress?: (progress: TaskCommandProgress) => void
 ): Promise<TaskActionSaveResult> {
   const request = {
     ...submission,
@@ -82,21 +103,36 @@ export async function submitTaskCommand(
     context: buildTaskAssistantClientContext(state, submission.taskId)
   };
 
-  if (isTauriRuntime()) {
-    if (!accessToken) throw new Error("Код доступа к рабочему пространству не найден.");
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke<TaskActionSaveResult>("submit_task_command", { token: accessToken, request });
+  const startedAt = performance.now();
+  const progressTimers = scheduleCommandProgress(onProgress);
+  try {
+    let result: TaskActionSaveResult;
+    if (isTauriRuntime()) {
+      if (!accessToken) throw new Error("Код доступа к рабочему пространству не найден.");
+      const { invoke } = await import("@tauri-apps/api/core");
+      result = await invoke<TaskActionSaveResult>("submit_task_command", { token: accessToken, request });
+    } else {
+      const response = await fetch("/api/task-command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+        cache: "no-store"
+      });
+      const body = await response.json() as TaskActionSaveResult & { error?: string };
+      if (!response.ok) throw new Error(body.error || "GPT не смог зафиксировать изменение в Google Sheets.");
+      result = body;
+    }
+    onProgress?.({ stage: "verification", label: "Запись подтверждена в Google Sheets" });
+    return {
+      ...result,
+      timings: {
+        ...result.timings,
+        clientRequestMs: Math.round(performance.now() - startedAt)
+      }
+    };
+  } finally {
+    progressTimers.forEach((timer) => window.clearTimeout(timer));
   }
-
-  const response = await fetch("/api/task-command", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-    cache: "no-store"
-  });
-  const body = await response.json() as TaskActionSaveResult & { error?: string };
-  if (!response.ok) throw new Error(body.error || "GPT не смог зафиксировать изменение в Google Sheets.");
-  return body;
 }
 
 export function createCommandId(prefix = "CMD") {
@@ -108,4 +144,14 @@ export function createCommandId(prefix = "CMD") {
 
 function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function scheduleCommandProgress(onProgress?: (progress: TaskCommandProgress) => void) {
+  if (!onProgress || typeof window === "undefined") return [];
+  onProgress({ stage: "connecting", label: "Подключаемся к рабочему пространству" });
+  return [
+    window.setTimeout(() => onProgress({ stage: "context", label: "Читаем контекст задачи и Google Drive" }), 1_200),
+    window.setTimeout(() => onProgress({ stage: "gpt", label: "GPT анализирует материалы и готовит решение" }), 5_000),
+    window.setTimeout(() => onProgress({ stage: "verification", label: "Ждём запись и проверку Google Sheets" }), 20_000)
+  ];
 }

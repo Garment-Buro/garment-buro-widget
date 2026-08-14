@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildTaskAssistantClientContext } from "@/lib/ai/client-context";
 import { getDashboardState } from "@/lib/data";
-import { buildRelevantDriveContext } from "@/lib/google/drive-context";
 import { callAppsScriptGateway } from "@/lib/services/apps-script-gateway";
 import type { TaskActionSaveResult, TaskCommandIntent } from "@/lib/services/task-action-service";
 
@@ -58,11 +57,6 @@ export async function POST(request: Request) {
       pomodoroCompleted: boundedInteger(rawDetails?.pomodoroCompleted, 0, 1_000)
     };
     const clientContext = buildTaskAssistantClientContext(dashboard, taskId);
-    const driveKnowledge = await buildRelevantDriveContext(clientContext, note).catch((error) => ({
-      rootFolderId: "",
-      files: [],
-      warnings: [error instanceof Error ? error.message : String(error)]
-    }));
     const gatewayRequest = {
       commandId,
       taskId,
@@ -70,7 +64,7 @@ export async function POST(request: Request) {
       details,
       author: person.name,
       personId: person.id,
-      context: { ...clientContext, driveKnowledge }
+      context: clientContext
     };
     const payload = await callAppsScriptGateway<{ commandResult?: TaskActionSaveResult }>("taskCommand", gatewayRequest);
     const result = payload.commandResult;

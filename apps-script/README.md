@@ -142,7 +142,7 @@ curl -sS "$APPS_SCRIPT_WEB_APP_URL" \
   --data "{\"token\":\"$APPS_SCRIPT_ACCESS_TOKEN\",\"action\":\"dashboard\"}"
 ```
 
-Test task writes on a disposable test task before using production tasks. A successful command returns `commandResult.syncStatus = SYNCED`; the backend rejects any other status.
+Test task writes on a disposable test task before using production tasks. A successful command returns `commandResult.syncStatus = SYNCED`; the backend rejects any other status. Gateway 1.2.0 also returns per-stage `commandResult.timings` so slow Drive, GPT, Sheets, or lock stages can be diagnosed separately.
 
 ## Write guarantees
 
@@ -153,5 +153,7 @@ Test task writes on a disposable test task before using production tasks. A succ
 - The mutation plan is persisted in `TASK_UPDATES.ROUTE_EFFECT` before the task row changes.
 - A retry restores a partial mutation from that persisted plan.
 - `SYNCED` is set only after a verification read.
+- Drive file contents are cached for 15 minutes with `modifiedTime` in the cache key; changed files therefore invalidate their own cache entry.
+- A command selects at most 4 related Drive files and sends at most 30,000 Drive characters to GPT.
 - `SESSION_HANDOFFS.SESSION_ID` prevents duplicate session-close rows.
 - Notification ACK writes only `ACK_AT`, optional `READ_AT`, and `LAST_UPDATED` after recipient verification.

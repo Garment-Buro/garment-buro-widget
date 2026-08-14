@@ -31,6 +31,8 @@ var GB_TASK_COMMAND_INTENTS_ = [
 ];
 
 function handleTaskCommandRequest_(payload) {
+  var startedAt = Date.now();
+  var timings = {};
   var request = payload && payload.request;
   if (!request || !request.commandId || !request.taskId || !request.intent) {
     throw new Error("Некорректная taskCommand-команда.");
@@ -38,8 +40,11 @@ function handleTaskCommandRequest_(payload) {
   validateCommandRequest_(request);
 
   var lock = LockService.getScriptLock();
+  var lockStartedAt = Date.now();
   lock.waitLock(30000);
+  timings.lockWaitMs = Date.now() - lockStartedAt;
   try {
+    var sheetsReadStartedAt = Date.now();
     var spreadsheet = openExecutionSpreadsheet_();
     var tasksSheet = requireSheet_(spreadsheet, "TASKS");
     var updatesSheet = requireSheet_(spreadsheet, "TASK_UPDATES");
@@ -53,13 +58,14 @@ function handleTaskCommandRequest_(payload) {
     var requestedSession = request.intent === "session_close" && request.details && request.details.sessionId
       ? findRecord_(handoffsSheet, "SESSION_ID", request.details.sessionId)
       : null;
+    timings.sheetsReadMs = Date.now() - sheetsReadStartedAt;
     if (duplicate) {
       return recoverCommandWrite_(tasksSheet, updatesSheet, handoffsSheet, request, task, duplicate, requestedSession);
     }
     if (requestedSession && requestedSession.SYNC_STATUS === "SYNCED") {
       return {
         ok: true,
-        commandResult: buildCommandResult_(request, task.STATUS, "SYNCED", "Рабочая сессия уже закрыта и не продублирована.")
+        commandResult: buildCommandResult_(request, task.STATUS, "SYNCED", "Рабочая сессия уже закрыта и не продублирована.", finishCommandTimings_(timings, startedAt))
       };
     }
     if (requestedSession && requestedSession.FIXATION_ID) {
@@ -69,7 +75,7 @@ function handleTaskCommandRequest_(payload) {
       }
     }
 
-    var plan = askGptForTaskPlan_(request, task, spreadsheet);
+    var plan = askGptForTaskPlan_(request, task, spreadsheet, timings);
     plan = validateTaskPlan_(request, task, plan);
     var sessionRow = null;
 
@@ -84,17 +90,22 @@ function handleTaskCommandRequest_(payload) {
     }
 
     try {
+      var sheetsWriteStartedAt = Date.now();
       appendTaskUpdate_(updatesSheet, request, task, plan);
       if (plan.targetStatus !== "UNCHANGED" && plan.targetStatus !== task.STATUS) {
         updateTaskFromPlan_(tasksSheet, task.__rowNumber, plan);
       }
+      timings.sheetsWriteMs = Date.now() - sheetsWriteStartedAt;
 
+      var verificationStartedAt = Date.now();
       verifyCommandWrite_(tasksSheet, updatesSheet, request, plan);
       updateTaskUpdateSyncStatus_(updatesSheet, request.commandId, "SYNCED");
       if (sessionRow) updateSessionSyncStatus_(handoffsSheet, sessionRow.__rowNumber, "SYNCED");
+      SpreadsheetApp.flush();
+      timings.verificationMs = Date.now() - verificationStartedAt;
       return {
         ok: true,
-        commandResult: buildCommandResult_(request, plan.targetStatus === "UNCHANGED" ? task.STATUS : plan.targetStatus, "SYNCED", plan.assistantMessage)
+        commandResult: buildCommandResult_(request, plan.targetStatus === "UNCHANGED" ? task.STATUS : plan.targetStatus, "SYNCED", plan.assistantMessage, finishCommandTimings_(timings, startedAt))
       };
     } catch (writeError) {
       updateTaskUpdateSyncStatus_(updatesSheet, request.commandId, "PARTIAL_SYNC");
@@ -138,15 +149,21 @@ function recoverCommandWrite_(tasksSheet, updatesSheet, handoffsSheet, request, 
   };
 }
 
-function askGptForTaskPlan_(request, task, spreadsheet) {
+function askGptForTaskPlan_(request, task, spreadsheet, timings) {
   var apiKey = requiredProperty_("OPENAI_API_KEY");
   var model = optionalProperty_("OPENAI_MODEL", "gpt-5.6-terra");
   var masterPromptId = requiredProperty_("MASTER_PROMPT_DOCUMENT_ID");
-  var masterPrompt = exportGoogleWorkspaceText_(masterPromptId);
+  var masterPromptStartedAt = Date.now();
+  var masterPrompt = cachedGoogleWorkspaceText_(masterPromptId);
+  timings.masterPromptMs = Date.now() - masterPromptStartedAt;
+  var taskContextStartedAt = Date.now();
   var recentUpdates = recentTaskUpdates_(spreadsheet, request.taskId, request.author, 20);
   var taskContext = findOptionalRecord_(spreadsheet, "TASK_CONTEXT", "TASK_ID", request.taskId);
   var playbooks = relatedPlaybooks_(spreadsheet, taskContext);
+  timings.taskContextMs = Date.now() - taskContextStartedAt;
+  var driveContextStartedAt = Date.now();
   var driveKnowledge = buildDriveTaskContext_(request, task, taskContext);
+  timings.driveContextMs = Date.now() - driveContextStartedAt;
   var instructions = [
     masterPrompt,
     "RUNTIME CONTRACT TASK COMMAND:",
@@ -177,6 +194,7 @@ function askGptForTaskPlan_(request, task, spreadsheet) {
     recentTaskUpdates: recentUpdates,
     clientContext: request.context
   });
+  var openAiStartedAt = Date.now();
   var response = UrlFetchApp.fetch("https://api.openai.com/v1/responses", {
     method: "post",
     contentType: "application/json",
@@ -198,6 +216,7 @@ function askGptForTaskPlan_(request, task, spreadsheet) {
       }
     })
   });
+  timings.openAiMs = Date.now() - openAiStartedAt;
   if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) {
     throw new Error("OpenAI API: " + response.getResponseCode() + " " + response.getContentText().slice(0, 500));
   }
@@ -445,15 +464,21 @@ function readPlanSnapshot_(update) {
   }
 }
 
-function buildCommandResult_(request, taskStatus, syncStatus, message) {
+function buildCommandResult_(request, taskStatus, syncStatus, message, timings) {
   return {
     commandId: request.commandId,
     assistantMessage: message,
     syncStatus: syncStatus,
     taskStatus: taskStatus,
     sessionId: request.details && request.details.sessionId || "",
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    timings: timings || {}
   };
+}
+
+function finishCommandTimings_(timings, startedAt) {
+  timings.totalMs = Date.now() - startedAt;
+  return timings;
 }
 
 function recentTaskUpdates_(spreadsheet, taskId, author, limit) {

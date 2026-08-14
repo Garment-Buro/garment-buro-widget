@@ -10,9 +10,10 @@ var GB_DRIVE_DOC_MIME_ = "application/vnd.google-apps.document";
 var GB_DRIVE_SHEET_MIME_ = "application/vnd.google-apps.spreadsheet";
 var GB_DRIVE_SLIDES_MIME_ = "application/vnd.google-apps.presentation";
 var GB_DRIVE_MAX_INDEXED_ = 240;
-var GB_DRIVE_MAX_SELECTED_ = 7;
-var GB_DRIVE_MAX_FILE_CHARS_ = 16000;
-var GB_DRIVE_MAX_CONTEXT_CHARS_ = 55000;
+var GB_DRIVE_MAX_SELECTED_ = 4;
+var GB_DRIVE_MAX_FILE_CHARS_ = 12000;
+var GB_DRIVE_MAX_CONTEXT_CHARS_ = 30000;
+var GB_DRIVE_CACHE_SECONDS_ = 900;
 
 function buildDriveTaskContext_(request, task, taskContext) {
   var rootFolderId = requiredProperty_("DRIVE_ROOT_FOLDER_ID");
@@ -26,7 +27,7 @@ function buildDriveTaskContext_(request, task, taskContext) {
     if (remaining <= 0) return;
     var limit = Math.min(GB_DRIVE_MAX_FILE_CHARS_, remaining);
     try {
-      var content = readDriveFileContent_(metadata, request, task, limit);
+      var content = readCachedDriveFileContent_(metadata, request, task, limit);
       files.push(driveContextFile_(metadata, content, content ? "READ" : "METADATA_ONLY"));
       remaining -= content.length;
     } catch (error) {
@@ -84,7 +85,7 @@ function driveFileIndex_(rootFolderId) {
   }
   if (queue.length) truncated = true;
   var result = { files: files, truncated: truncated };
-  try { cache.put(cacheKey, JSON.stringify(result), 300); } catch (error) { /* index can exceed cache item limit */ }
+  try { cache.put(cacheKey, JSON.stringify(result), GB_DRIVE_CACHE_SECONDS_); } catch (error) { /* index can exceed cache item limit */ }
   return result;
 }
 
@@ -136,6 +137,38 @@ function readDriveFileContent_(metadata, request, task, limit) {
     content = DriveApp.getFileById(metadata.id).getBlob().getDataAsString("UTF-8");
   }
   return truncateDriveText_(content, limit);
+}
+
+function readCachedDriveFileContent_(metadata, request, task, limit) {
+  var cache = CacheService.getScriptCache();
+  var taskScope = metadata.mimeType === GB_DRIVE_SHEET_MIME_
+    ? safeDriveCachePart_(request.taskId + "-" + request.author)
+    : "shared";
+  var modified = String(metadata.modifiedTime || "unknown").replace(/[^0-9]/g, "").slice(0, 18);
+  var cacheKey = ["gb-drive-content-v3", metadata.id, modified, taskScope, limit].join("-");
+  var cached = cache.get(cacheKey);
+  if (cached !== null) return cached === "__GB_EMPTY__" ? "" : cached;
+  var content = readDriveFileContent_(metadata, request, task, limit);
+  try { cache.put(cacheKey, content || "__GB_EMPTY__", GB_DRIVE_CACHE_SECONDS_); } catch (error) { /* read still succeeded */ }
+  return content;
+}
+
+function cachedGoogleWorkspaceText_(fileId) {
+  var file = DriveApp.getFileById(fileId);
+  var modified = String(file.getLastUpdated().toISOString()).replace(/[^0-9]/g, "").slice(0, 18);
+  var cache = CacheService.getScriptCache();
+  var cacheKey = ["gb-master-prompt-v2", fileId, modified].join("-");
+  var cached = cache.get(cacheKey);
+  if (cached !== null) return cached;
+  var content = exportGoogleWorkspaceText_(fileId).trim();
+  try {
+    if (content.length <= 30000) cache.put(cacheKey, content, GB_DRIVE_CACHE_SECONDS_);
+  } catch (error) { /* preserve the full prompt even when it is too large for cache */ }
+  return content;
+}
+
+function safeDriveCachePart_(value) {
+  return String(value || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80) || "none";
 }
 
 function exportGoogleWorkspaceText_(fileId) {

@@ -62,7 +62,8 @@ import {
   submitTaskCommand,
   type TaskActionIntent,
   type TaskActionSaveResult,
-  type TaskActionSubmission
+  type TaskActionSubmission,
+  type TaskCommandProgress
 } from "@/lib/services/task-action-service";
 import { useWorkSession } from "@/lib/use-work-session";
 import type { DashboardState, DependencySummary, Person, ProgressGate, Task } from "@/lib/types";
@@ -144,7 +145,7 @@ export function DashboardClient({
   initialState: DashboardState;
   loadState?: () => Promise<DashboardState>;
   onExit?: () => void;
-  onConfirmTaskAction?: (submission: TaskActionSubmission) => Promise<TaskActionSaveResult | undefined>;
+  onConfirmTaskAction?: (submission: TaskActionSubmission, onProgress?: (progress: TaskCommandProgress) => void) => Promise<TaskActionSaveResult | undefined>;
   accessToken?: string;
   isAlwaysOnTop?: boolean;
   onToggleAlwaysOnTop?: () => void;
@@ -222,11 +223,14 @@ export function DashboardClient({
     if (!taskQueue.some((task) => task.id === focusedTaskId)) setFocusedTaskId(taskQueue[0].id);
   }, [focusedTaskId, taskQueue]);
 
-  const confirmTaskAction = useCallback(async (submission: TaskActionSubmission) => {
+  const confirmTaskAction = useCallback(async (submission: TaskActionSubmission, onProgress?: (progress: TaskCommandProgress) => void) => {
     let result: TaskActionSaveResult | undefined;
-    if (onConfirmTaskAction) result = await onConfirmTaskAction(submission);
-    else result = await submitTaskCommand(submission, state, accessToken);
-    await refresh();
+    if (onConfirmTaskAction) result = await onConfirmTaskAction(submission, onProgress);
+    else result = await submitTaskCommand(submission, state, accessToken, onProgress);
+    const refreshStartedAt = performance.now();
+    void refresh().then(() => {
+      if (result?.timings) result.timings.dashboardRefreshMs = Math.round(performance.now() - refreshStartedAt);
+    });
     return result;
   }, [accessToken, onConfirmTaskAction, refresh, state]);
 
@@ -339,7 +343,7 @@ function PersonalWorkspace({
   onOpenTask: (task: Task) => void;
   onFocusTask: (taskId: string) => void;
   onExit: () => void;
-  onConfirmTaskAction: (submission: TaskActionSubmission) => Promise<TaskActionSaveResult | undefined>;
+  onConfirmTaskAction: (submission: TaskActionSubmission, onProgress?: (progress: TaskCommandProgress) => void) => Promise<TaskActionSaveResult | undefined>;
   isAlwaysOnTop?: boolean;
   onToggleAlwaysOnTop?: () => void;
 }) {
@@ -347,6 +351,8 @@ function PersonalWorkspace({
   const [taskActionDraft, setTaskActionDraft] = useState<TaskActionDraft>(emptyTaskActionDraft);
   const [confirmation, setConfirmation] = useState<TaskActionConfirmation>("idle");
   const [commandFeedback, setCommandFeedback] = useState("");
+  const [commandProgress, setCommandProgress] = useState<TaskCommandProgress | null>(null);
+  const [commandElapsedSeconds, setCommandElapsedSeconds] = useState(0);
   const [pomodoroMinutes, setPomodoroMinutes] = useState(25);
   const workSession = useWorkSession(person.id);
   const activeSession = workSession.session?.taskId === currentTask.id ? workSession.session : null;
@@ -371,9 +377,9 @@ function PersonalWorkspace({
   const canAcceptTask = ["BACKLOG", "READY"].includes(currentTask.status);
   const canStartSession = currentTask.status === "IN_PROGRESS" && !activeSession;
   const actionNote = confirmation === "saving"
-    ? "Отправляем команду в GPT и ждём обновления Google Sheets."
+    ? `${commandProgress?.label || "Отправляем команду в GPT"} · ${commandElapsedSeconds} сек.`
     : confirmation === "success"
-      ? commandFeedback || "GPT зафиксировала изменение, данные перечитаны из Google Sheets."
+      ? commandFeedback || "GPT зафиксировала изменение. Dashboard обновляется в фоне."
       : confirmation === "error"
         ? commandFeedback || "GPT не смогла зафиксировать изменение. Повторите попытку."
       : actionPreview
@@ -384,14 +390,25 @@ function PersonalWorkspace({
 
   useEffect(() => {
     if (confirmation !== "success") return;
-    const timer = window.setTimeout(() => setConfirmation("idle"), 3_000);
+    const timer = window.setTimeout(() => setConfirmation("idle"), 8_000);
     return () => window.clearTimeout(timer);
+  }, [confirmation]);
+
+  useEffect(() => {
+    if (confirmation !== "saving") return;
+    const startedAt = Date.now();
+    setCommandElapsedSeconds(0);
+    const timer = window.setInterval(() => {
+      setCommandElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1_000);
+    return () => window.clearInterval(timer);
   }, [confirmation]);
 
   useEffect(() => {
     setTaskAction(null);
     setTaskActionDraft(emptyTaskActionDraft());
     setCommandFeedback("");
+    setCommandProgress(null);
     setConfirmation("idle");
   }, [currentTask.id]);
 
@@ -414,9 +431,11 @@ function PersonalWorkspace({
   async function sendCommand(submission: TaskActionSubmission) {
     setConfirmation("saving");
     setCommandFeedback("");
+    setCommandProgress({ stage: "connecting", label: "Подключаемся к рабочему пространству" });
     try {
-      const result = await onConfirmTaskAction(submission);
-      setCommandFeedback(result?.assistantMessage || "Команда принята GPT и синхронизирована.");
+      const result = await onConfirmTaskAction(submission, setCommandProgress);
+      if (result?.timings) console.info("[task-command timings]", result.timings);
+      setCommandFeedback(commandSuccessMessage(result));
       setConfirmation("success");
       return result;
     } catch (error) {
@@ -644,6 +663,7 @@ function PersonalWorkspace({
                   onSubmit={() => { void confirmTaskAction(); }}
                   confirmation={confirmation}
                   feedback={commandFeedback}
+                  progressLabel={actionNote}
                 />
               ) : null}
               {!taskAction && (!activeSession || confirmation !== "idle") ? (
@@ -1005,7 +1025,8 @@ function TaskActionPopover({
   onClose,
   onSubmit,
   confirmation,
-  feedback
+  feedback,
+  progressLabel
 }: {
   intent: TaskActionIntent;
   draft: TaskActionDraft;
@@ -1016,6 +1037,7 @@ function TaskActionPopover({
   onSubmit: () => void;
   confirmation: TaskActionConfirmation;
   feedback: string;
+  progressLabel: string;
 }) {
   const updateDraft = (patch: Partial<TaskActionDraft>) => onDraftChange({ ...draft, ...patch });
 
@@ -1077,7 +1099,8 @@ function TaskActionPopover({
         <p>{preview || previewHint(intent)}</p>
       </div>
       <footer className="task-action-popover-footer">
-        {confirmation === "error" && feedback ? <p><AlertTriangle size={14} />{feedback}</p> : null}
+        {confirmation === "saving" ? <p className="task-command-progress"><RefreshCw className="spin" size={14} />{progressLabel}</p> : null}
+        {confirmation === "error" && feedback ? <p className="is-error"><AlertTriangle size={14} />{feedback}</p> : null}
         <button
           className={`confirm-task-action is-${confirmation}`}
           type="button"
@@ -1459,6 +1482,22 @@ function readErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message.trim()) return error.message;
   if (typeof error === "string" && error.trim()) return error;
   return fallback;
+}
+
+function commandSuccessMessage(result?: TaskActionSaveResult) {
+  const assistantMessage = result?.assistantMessage || "Команда принята GPT и синхронизирована.";
+  const timings = result?.timings;
+  if (!timings?.clientRequestMs) return assistantMessage;
+  const details = [
+    timings.openAiMs ? `GPT ${formatDuration(timings.openAiMs)}` : "",
+    timings.driveContextMs ? `Drive ${formatDuration(timings.driveContextMs)}` : "",
+    timings.verificationMs ? `проверка ${formatDuration(timings.verificationMs)}` : ""
+  ].filter(Boolean).join(" · ");
+  return `Синхронизировано за ${formatDuration(timings.clientRequestMs)}${details ? ` (${details})` : ""}. ${assistantMessage}`;
+}
+
+function formatDuration(milliseconds: number) {
+  return `${Math.max(0.1, milliseconds / 1000).toFixed(1).replace(".0", "")} сек.`;
 }
 
 function toggleFullscreen() {
