@@ -6,7 +6,7 @@
  * apps-script/README.md, then deploy a new version after every code change.
  */
 
-var GB_GATEWAY_VERSION_ = "1.0.0";
+var GB_GATEWAY_VERSION_ = "1.1.0";
 
 var GB_EXECUTION_SHEETS_ = {
   goals: "GOALS",
@@ -161,6 +161,7 @@ function gatewayCapabilities_() {
   return {
     version: GB_GATEWAY_VERSION_,
     dashboardRead: true,
+    driveContext: true,
     taskCommands: true,
     notificationAck: true,
     verifiedWrites: true,

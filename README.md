@@ -28,6 +28,7 @@ Task-management commands use the following write path:
 widget action + employee comment
   -> Apps Script taskCommand gateway
   -> fresh MASTER / TASK / TASK_UPDATES context
+  -> task-scoped Google Drive documents from the canonical project folder
   -> OpenAI structured mutation plan
   -> guarded TASKS / TASK_UPDATES / SESSION_HANDOFFS write
   -> verification read
@@ -42,7 +43,7 @@ Execution System reads `PEOPLE`, `GOALS`, `MILESTONES`, `TASKS`, `TASK_CONTEXT`,
 
 Only active `VERIFIED_DONE` gates earn progress. A current task can show a dotted potential segment when it is listed in `CLOSED_BY_TASK`, but that segment does not become solid until the gate is verified.
 
-For accounts where Google Cloud billing registration is unavailable, set `DASHBOARD_DATA_SOURCE=apps-script`. The complete Apps Script backend is in [`apps-script/Code.gs`](apps-script/Code.gs) and [`apps-script/task-commands.gs`](apps-script/task-commands.gs); deployment and sheet requirements are documented in [`apps-script/README.md`](apps-script/README.md). It reads the private dashboard tables, sends constrained task decisions to OpenAI, verifies writes, records session handoffs, and acknowledges delivered notifications.
+For accounts where Google Cloud billing registration is unavailable, set `DASHBOARD_DATA_SOURCE=apps-script`. The complete Apps Script backend is in [`apps-script/Code.gs`](apps-script/Code.gs), [`apps-script/task-commands.gs`](apps-script/task-commands.gs), and [`apps-script/drive-context.gs`](apps-script/drive-context.gs); deployment and sheet requirements are documented in [`apps-script/README.md`](apps-script/README.md). It reads the private dashboard tables and task-related Drive documents, sends constrained task decisions to OpenAI, verifies writes, records session handoffs, and acknowledges delivered notifications.
 
 ## Environment
 
@@ -60,6 +61,7 @@ OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-5.4-mini
 GOOGLE_EXECUTION_SPREADSHEET_ID=...
 GOOGLE_CONTROL_SPREADSHEET_ID=...
+GOOGLE_DRIVE_ROOT_FOLDER_ID=1X4Qe4giI3mEnPUZTce_Q1aDSCh18P6q_
 ```
 
 Choose one Google auth method:
@@ -81,13 +83,13 @@ or:
 GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\service-account.json
 ```
 
-The service account or Google API key must have read access to both spreadsheets. Credentials are imported only by server modules and must never use a `NEXT_PUBLIC_` prefix.
+The service account must have read access to the canonical Drive folder and both spreadsheets. The backend uses it to read private Docs, Sheets, Slides and text files; large Slides exports use Drive long-running download operations. Binary production files remain source links/metadata unless a later explicit analysis action uploads them. Credentials are imported only by server modules and must never use a `NEXT_PUBLIC_` prefix or live inside the repository.
 
 For task commands, `OPENAI_API_KEY` belongs in Apps Script Properties and should be owned by the OpenAI project service account. Every installed desktop client then uses the same protected GPT/Sheets gateway. The key must not be bundled into React or a distributed installer. The older native read-only assistant command can still read `.env.local` during development, but the task-management UI no longer exposes that chat panel.
 
 The widget sends only named intents (`accept`, `reject`, `stuck`, `waiting`, `fact`, `done`, `session_start`, `session_close`). GPT returns a strict structured plan; Apps Script applies only the coded fields and returns `SYNCED` after a verification read. The backend rejects unverified responses. See the Apps Script deployment guide for required columns and smoke tests.
 
-The task-command gateway refreshes `00_MASTER PROMPT — ЛИЧНЫЙ ПРОЕКТ`, the task and recent task updates before every command and uses the desktop employee setting as `AUTHOR`. It does not use chat history as project state.
+The task-command gateway refreshes `00_MASTER PROMPT — ЛИЧНЫЙ ПРОЕКТ`, the task, recent task updates, `00_ПРАВИЛА РАБОТЫ С БАЗОЙ`, `00_СОСТОЯНИЕ ПРОЕКТА`, and task-related files selected from the canonical Drive folder before every command. It uses the desktop employee setting as `AUTHOR` and does not use chat history as project state. GPT receives file content for readable Workspace/text formats and source metadata for unsupported binary formats; it does not receive arbitrary Drive write access.
 
 ## Resilience
 

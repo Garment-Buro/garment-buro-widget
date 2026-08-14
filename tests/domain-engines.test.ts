@@ -225,6 +225,7 @@ test("17a. task actions use the GPT write command instead of a local mock", asyn
 test("17b. Apps Script recovers partial writes before marking a session SYNCED", async () => {
   const entrypointCode = await readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
   const gatewayCode = await readFile(new URL("../apps-script/task-commands.gs", import.meta.url), "utf8");
+  const driveContextCode = await readFile(new URL("../apps-script/drive-context.gs", import.meta.url), "utf8");
   const recoveryStart = gatewayCode.indexOf("function recoverCommandWrite_");
   const recoveryEnd = gatewayCode.indexOf("function askGptForTaskPlan_", recoveryStart);
   const recoveryCode = gatewayCode.slice(recoveryStart, recoveryEnd);
@@ -238,7 +239,9 @@ test("17b. Apps Script recovers partial writes before marking a session SYNCED",
   assert.match(entrypointCode, /handleNotificationAckRequest_/);
   assert.match(entrypointCode, /capabilities: gatewayCapabilities_/);
   assert.doesNotMatch(entrypointCode, /gb_[a-f0-9]{32,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}/);
-  assert.doesNotThrow(() => new Function(`${entrypointCode}\n${gatewayCode}`));
+  assert.match(gatewayCode, /buildDriveTaskContext_/);
+  assert.match(driveContextCode, /DRIVE_ROOT_FOLDER_ID/);
+  assert.doesNotThrow(() => new Function(`${entrypointCode}\n${driveContextCode}\n${gatewayCode}`));
 });
 
 test("17c. widget backend rebuilds trusted context and accepts only verified gateway writes", async () => {
@@ -253,6 +256,25 @@ test("17c. widget backend rebuilds trusted context and accepts only verified gat
   assert.doesNotMatch(desktopCode, /NOTIFICATIONS_SHEET_GID/);
   assert.match(desktopCode, /syncStatus/);
   assert.match(desktopCode, /ack_notification/);
+});
+
+test("17d. private Drive context uses server credentials and task-scoped retrieval", async () => {
+  const authCode = await readFile(new URL("../lib/google/service-account.ts", import.meta.url), "utf8");
+  const driveCode = await readFile(new URL("../lib/google/drive-context.ts", import.meta.url), "utf8");
+  const assistantContextCode = await readFile(new URL("../lib/ai/drive-context.ts", import.meta.url), "utf8");
+  const ignoreCode = await readFile(new URL("../.gitignore", import.meta.url), "utf8");
+
+  assert.match(authCode, /GOOGLE_APPLICATION_CREDENTIALS/);
+  assert.match(authCode, /oauth:grant-type:jwt-bearer/);
+  assert.match(driveCode, /drive\.readonly/);
+  assert.match(driveCode, /buildRelevantDriveContext/);
+  assert.match(driveCode, /\/download\?mimeType=/);
+  assert.match(driveCode, /import\("jszip"\)/);
+  assert.match(driveCode, /00_ПРАВИЛА РАБОТЫ С БАЗОЙ/);
+  assert.match(driveCode, /00_СОСТОЯНИЕ ПРОЕКТА/);
+  assert.match(assistantContextCode, /driveKnowledge/);
+  assert.doesNotMatch(assistantContextCode, /docs\.google\.com\/document\/d\/.*export/);
+  assert.match(ignoreCode, /crucial-context-\*\.json/);
 });
 
 test("18. dashboard person selection is case-insensitive and never falls back to another employee", () => {

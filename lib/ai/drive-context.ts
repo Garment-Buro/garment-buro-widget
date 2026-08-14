@@ -2,7 +2,11 @@ import "server-only";
 
 import { spreadsheetConfig } from "@/lib/config";
 import { buildTaskAssistantClientContext } from "@/lib/ai/client-context";
-import { parseCsv } from "@/lib/ai/csv";
+import {
+  buildRelevantDriveContext,
+  readGoogleDocumentText,
+  readGoogleSheetRecords
+} from "@/lib/google/drive-context";
 import type { TaskAssistantMode } from "@/lib/ai/types";
 import type { DashboardState } from "@/lib/types";
 
@@ -14,11 +18,11 @@ const widgetBriefDocumentId =
   "1PKxVgMn7NyL0Kn55WPsODdMK8Fu_IibHsnH5Nv3A0u8";
 
 const sheetTabs = {
-  playbooks: { title: "PLAYBOOKS", gid: "1008" },
-  taskUpdates: { title: "TASK_UPDATES", gid: "1011" },
-  events: { title: "EVENTS", gid: "1012" },
-  routingActions: { title: "ROUTING_ACTIONS", gid: "1013" },
-  sessionHandoffs: { title: "SESSION_HANDOFFS", gid: "1014" }
+  playbooks: "PLAYBOOKS",
+  taskUpdates: "TASK_UPDATES",
+  events: "EVENTS",
+  routingActions: "ROUTING_ACTIONS",
+  sessionHandoffs: "SESSION_HANDOFFS"
 } as const;
 
 type SheetRecord = Record<string, string>;
@@ -42,9 +46,13 @@ export async function buildAssistantDriveContext(
   const tabEntries = Object.entries(sheetTabs) as Array<
     [keyof typeof sheetTabs, (typeof sheetTabs)[keyof typeof sheetTabs]]
   >;
-  const [masterPrompt, tabResults] = await Promise.all([
-    fetchGoogleDocument(masterPromptDocumentId, "00_MASTER PROMPT — ЛИЧНЫЙ ПРОЕКТ"),
-    Promise.all(tabEntries.map(async ([key, tab]) => [key, await fetchSheetRecords(tab.gid, tab.title)] as const))
+  const [masterPrompt, tabResults, driveKnowledge] = await Promise.all([
+    readGoogleDocumentText(masterPromptDocumentId, "00_MASTER PROMPT — ЛИЧНЫЙ ПРОЕКТ"),
+    Promise.all(tabEntries.map(async ([key, title]) => [key, await readGoogleSheetRecords(
+      spreadsheetConfig.executionId,
+      title
+    )] as const)),
+    buildRelevantDriveContext(base, message)
   ]);
   const tabs = Object.fromEntries(tabResults) as Record<keyof typeof sheetTabs, SheetRecord[]>;
   const relevantTaskIds = new Set([base.task.id, ...base.relatedTasks.map((task) => task.id)]);
@@ -70,11 +78,11 @@ export async function buildAssistantDriveContext(
   if (/WIDGET brief|WIDGET — VISION/i.test(canonicalRefs)) {
     referencedDocuments.push({
       title: "WIDGET — VISION & IMPLEMENTATION BRIEF v1",
-      content: await fetchGoogleDocument(widgetBriefDocumentId, "WIDGET — VISION & IMPLEMENTATION BRIEF v1")
+      content: await readGoogleDocumentText(widgetBriefDocumentId, "WIDGET — VISION & IMPLEMENTATION BRIEF v1")
     });
   }
 
-  const warnings = buildWarnings(dashboard);
+  const warnings = [...buildWarnings(dashboard), ...driveKnowledge.warnings];
   const operationalContext = {
     author: base.personName,
     mode,
@@ -93,6 +101,7 @@ export async function buildAssistantDriveContext(
     events,
     latestSessionHandoffs: sessionHandoffs,
     referencedDocuments,
+    driveKnowledge,
     dataHealth: base.dataHealth,
     sources: base.sources
   };
@@ -106,41 +115,14 @@ export async function buildAssistantDriveContext(
       "Если данных недостаточно или источник неактуален, скажи это прямо и задай только один действительно необходимый вопрос.",
       JSON.stringify(operationalContext, null, 2)
     ].join("\n\n"),
-    sources: [
+    sources: [...new Set([
       "00_MASTER PROMPT — ЛИЧНЫЙ ПРОЕКТ",
       "10_EXECUTION SYSTEM",
-      ...referencedDocuments.map((item) => item.title)
-    ],
+      ...referencedDocuments.map((item) => item.title),
+      ...driveKnowledge.files.map((item) => item.title)
+    ])],
     warnings
   };
-}
-
-async function fetchGoogleDocument(documentId: string, title: string): Promise<string> {
-  const response = await fetch(
-    `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/export?format=txt`,
-    { cache: "no-store", redirect: "follow", signal: AbortSignal.timeout(30_000) }
-  );
-  if (!response.ok) throw new Error(`Не удалось прочитать актуальный документ «${title}» (${response.status}).`);
-  const text = (await response.text()).replace(/^\uFEFF/, "").trim();
-  if (!text) throw new Error(`Документ «${title}» пуст или недоступен.`);
-  return text;
-}
-
-async function fetchSheetRecords(gid: string, title: string): Promise<SheetRecord[]> {
-  const response = await fetch(
-    `https://docs.google.com/spreadsheets/d/${encodeURIComponent(spreadsheetConfig.executionId)}/export?format=csv&gid=${gid}`,
-    { cache: "no-store", redirect: "follow", signal: AbortSignal.timeout(30_000) }
-  );
-  if (!response.ok) throw new Error(`Не удалось прочитать лист ${title} (${response.status}).`);
-  return rowsToRecords(parseCsv(await response.text()));
-}
-
-function rowsToRecords(rows: string[][]): SheetRecord[] {
-  const [rawHeaders = [], ...body] = rows;
-  const headers = rawHeaders.map((header) => header.replace(/^\uFEFF/, "").trim());
-  return body
-    .filter((row) => row.some((cell) => cell.trim()))
-    .map((row) => Object.fromEntries(headers.map((header, index) => [header, String(row[index] || "").trim()])));
 }
 
 function assertTaskIsRelevant(dashboard: DashboardState, taskId: string) {

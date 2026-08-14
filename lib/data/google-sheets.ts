@@ -1,9 +1,8 @@
 import "server-only";
 
-import { createSign } from "crypto";
-import { readFile } from "fs/promises";
 import { spreadsheetConfig } from "@/lib/config";
 import { makeSourceStatus } from "@/lib/data/normalize";
+import { getGoogleAccessToken } from "@/lib/google/service-account";
 import type { RawSheetBundle, SourceName } from "@/lib/types";
 
 type SheetKey = Exclude<keyof RawSheetBundle, "sources">;
@@ -32,8 +31,6 @@ const ranges: Record<SheetKey, RangeConfig> = {
     source: "control"
   }
 };
-
-let cachedToken: { token: string; expiresAt: number } | null = null;
 
 export class GoogleSheetsDataSource {
   async fetch(): Promise<RawSheetBundle> {
@@ -94,56 +91,6 @@ async function getAuthQuery(): Promise<string> {
     return `&key=${encodeURIComponent(process.env.GOOGLE_SHEETS_API_KEY)}`;
   }
 
-  const token = await getServiceAccountToken();
+  const token = await getGoogleAccessToken(["https://www.googleapis.com/auth/spreadsheets.readonly"]);
   return `&access_token=${encodeURIComponent(token)}`;
-}
-
-async function getServiceAccountToken(): Promise<string> {
-  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) return cachedToken.token;
-
-  const credentials = await getServiceAccountCredentials();
-  if (!credentials.client_email || !credentials.private_key) {
-    throw new Error("Google Sheets credentials are not configured");
-  }
-
-  const now = Math.floor(Date.now() / 1000);
-  const header = base64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const claim = base64Url(JSON.stringify({
-    iss: credentials.client_email,
-    scope: "https://www.googleapis.com/auth/spreadsheets.readonly",
-    aud: "https://oauth2.googleapis.com/token",
-    exp: now + 3600,
-    iat: now
-  }));
-  const unsigned = `${header}.${claim}`;
-  const signature = createSign("RSA-SHA256").update(unsigned).sign(credentials.private_key, "base64url");
-  const response = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion: `${unsigned}.${signature}`
-    })
-  });
-
-  if (!response.ok) throw new Error(`Google token request failed: ${response.status} ${response.statusText}`);
-  const payload = (await response.json()) as { access_token: string; expires_in: number };
-  cachedToken = { token: payload.access_token, expiresAt: Date.now() + payload.expires_in * 1000 };
-  return cachedToken.token;
-}
-
-async function getServiceAccountCredentials(): Promise<{ client_email?: string; private_key?: string }> {
-  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    const file = await readFile(process.env.GOOGLE_APPLICATION_CREDENTIALS, "utf8");
-    return JSON.parse(file) as { client_email?: string; private_key?: string };
-  }
-
-  return {
-    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n")
-  };
-}
-
-function base64Url(value: string): string {
-  return Buffer.from(value).toString("base64url");
 }

@@ -4,6 +4,7 @@ This folder is the complete Google Apps Script project for the widget:
 
 - `Code.gs` — protected Web app entrypoint, dashboard reads, capabilities and notification ACK writes.
 - `task-commands.gs` — GPT planning, constrained task mutations, sessions, idempotency and recovery.
+- `drive-context.gs` — task-scoped Drive discovery and readable Docs/Sheets/Slides context.
 - `appsscript.json` — V8 runtime and the minimum Google scopes required by the code.
 
 Do not keep the old read-only `doPost` beside `Code.gs`: Apps Script projects may only have one global `doPost` entrypoint.
@@ -18,6 +19,7 @@ Open **Project Settings → Script Properties** and add:
 | `EXECUTION_SPREADSHEET_ID` | Spreadsheet containing tasks and execution state |
 | `CONTROL_SPREADSHEET_ID` | Spreadsheet containing `ISSUES` |
 | `MASTER_PROMPT_DOCUMENT_ID` | Google Doc `00_MASTER PROMPT — ЛИЧНЫЙ ПРОЕКТ` |
+| `DRIVE_ROOT_FOLDER_ID` | Canonical project folder; currently `1X4Qe4giI3mEnPUZTce_Q1aDSCh18P6q_` |
 | `OPENAI_API_KEY` | API key owned by the OpenAI project service account |
 | `OPENAI_MODEL` | Optional; defaults to `gpt-5.4-mini` |
 
@@ -70,7 +72,7 @@ Headers must be in the first row and use the exact names above.
 ## Deploy
 
 1. Replace the existing read-only code with `Code.gs`.
-2. Add a second Apps Script file named `task-commands.gs` and paste its repository version.
+2. Add Apps Script files named `task-commands.gs` and `drive-context.gs` and paste their repository versions.
 3. Enable **Show `appsscript.json` manifest file in editor** and replace it with this folder's manifest.
 4. Add Script Properties.
 5. Run any function once from the editor and approve Spreadsheet, Document and external-request permissions.
@@ -103,6 +105,7 @@ The response must contain:
   "ok": true,
   "capabilities": {
     "taskCommands": true,
+    "driveContext": true,
     "notificationAck": true,
     "verifiedWrites": true
   }
@@ -122,6 +125,7 @@ Test task writes on a disposable test task before using production tasks. A succ
 ## Write guarantees
 
 - GPT returns a strict JSON-schema mutation plan; it does not receive arbitrary range-write access.
+- Before GPT runs, the gateway reads core rules/state plus task-related Docs, Sheets, Slides and text files from `DRIVE_ROOT_FOLDER_ID`. Binary files are represented by metadata and a Drive link.
 - The script applies only explicitly coded task fields.
 - `TASK_UPDATES.UPDATE_ID` is derived from `commandId` and is the command idempotency key.
 - The mutation plan is persisted in `TASK_UPDATES.ROUTE_EFFECT` before the task row changes.

@@ -16,5 +16,7 @@ coverage/
 *.p12
 *.pfx
 *.key
+crucial-context-*.json
+*-service-account*.json
 .DS_Store
 Thumbs.db

@@ -22,3 +22,7 @@ export const appsScriptConfig = {
   webAppUrl: env.APPS_SCRIPT_WEB_APP_URL || "",
   accessToken: env.APPS_SCRIPT_ACCESS_TOKEN || ""
 };
+
+export const googleDriveConfig = {
+  rootFolderId: env.GOOGLE_DRIVE_ROOT_FOLDER_ID || "1X4Qe4giI3mEnPUZTce_Q1aDSCh18P6q_"
+};
