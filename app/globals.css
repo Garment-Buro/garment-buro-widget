@@ -3104,39 +3104,6 @@ input:focus-visible {
   align-items: center;
 }
 
-.widget-animated-mark {
-  position: relative;
-  display: grid;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 auto;
-  overflow: hidden;
-  place-items: center;
-  border-radius: 50%;
-  animation: widget-mark-orbit 12s linear infinite;
-}
-
-.widget-animated-mark video {
-  position: relative;
-  z-index: 1;
-  width: 30px;
-  height: 30px;
-  object-fit: cover;
-  mix-blend-mode: multiply;
-}
-
-.widget-animated-mark .widget-mark-fallback {
-  object-fit: contain;
-}
-
-@keyframes widget-mark-orbit {
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .widget-animated-mark { animation: none; }
-}
-
 .widget-notification-indicator {
   position: relative;
   display: grid;

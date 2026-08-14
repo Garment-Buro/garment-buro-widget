@@ -14,6 +14,34 @@ const MASTER_PROMPT_DOCUMENT_ID: &str = "1_EBiiqM_7c0FxpXbmfZpAg1-POaftWRm26EIvS
 const WIDGET_BRIEF_DOCUMENT_ID: &str = "1PKxVgMn7NyL0Kn55WPsODdMK8Fu_IibHsnH5Nv3A0u8";
 const NOTIFICATIONS_SHEET_GID: &str = "1015";
 
+#[cfg(target_os = "macos")]
+const TRAY_ANIMATION_FRAMES: &[&[u8]] = &[
+  include_bytes!("../icons/tray-frames/tray-00.png"),
+  include_bytes!("../icons/tray-frames/tray-01.png"),
+  include_bytes!("../icons/tray-frames/tray-02.png"),
+  include_bytes!("../icons/tray-frames/tray-03.png"),
+  include_bytes!("../icons/tray-frames/tray-04.png"),
+  include_bytes!("../icons/tray-frames/tray-05.png"),
+  include_bytes!("../icons/tray-frames/tray-06.png"),
+  include_bytes!("../icons/tray-frames/tray-07.png"),
+  include_bytes!("../icons/tray-frames/tray-08.png"),
+  include_bytes!("../icons/tray-frames/tray-09.png"),
+  include_bytes!("../icons/tray-frames/tray-10.png"),
+  include_bytes!("../icons/tray-frames/tray-11.png"),
+  include_bytes!("../icons/tray-frames/tray-12.png"),
+  include_bytes!("../icons/tray-frames/tray-13.png"),
+  include_bytes!("../icons/tray-frames/tray-14.png"),
+  include_bytes!("../icons/tray-frames/tray-15.png"),
+  include_bytes!("../icons/tray-frames/tray-16.png"),
+  include_bytes!("../icons/tray-frames/tray-17.png"),
+  include_bytes!("../icons/tray-frames/tray-18.png"),
+  include_bytes!("../icons/tray-frames/tray-19.png"),
+  include_bytes!("../icons/tray-frames/tray-20.png"),
+  include_bytes!("../icons/tray-frames/tray-21.png"),
+  include_bytes!("../icons/tray-frames/tray-22.png"),
+  include_bytes!("../icons/tray-frames/tray-23.png"),
+];
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TaskAssistantRequest {
@@ -450,6 +478,23 @@ fn show_widget(app: &AppHandle) {
   let _ = collapse_widget_window(app.clone());
 }
 
+#[cfg(target_os = "macos")]
+fn start_tray_animation(tray: tauri::tray::TrayIcon) {
+  std::thread::spawn(move || {
+    let mut frame_index = 0usize;
+    loop {
+      let Ok(frame) = Image::from_bytes(TRAY_ANIMATION_FRAMES[frame_index]) else {
+        return;
+      };
+      if tray.set_icon_with_as_template(Some(frame), false).is_err() {
+        return;
+      }
+      frame_index = (frame_index + 1) % TRAY_ANIMATION_FRAMES.len();
+      std::thread::sleep(std::time::Duration::from_millis(280));
+    }
+  });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -482,7 +527,7 @@ pub fn run() {
       let menu = Menu::with_items(app, &[&show_item, &dashboard_item, &pin_item, &quit_item])?;
 
       let tray_icon = Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?;
-      TrayIconBuilder::new()
+      let tray = TrayIconBuilder::new()
         .icon(tray_icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -508,6 +553,9 @@ pub fn run() {
           }
         })
         .build(app)?;
+
+      #[cfg(target_os = "macos")]
+      start_tray_animation(tray);
 
       if let Some(window) = app.get_webview_window("main") {
         let window_to_hide = window.clone();

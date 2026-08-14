@@ -97,10 +97,6 @@ export function WidgetClient({
     <main className="widget-page">
       <section className={`widget-shell widget-tier-${rewardTier}`} aria-label="Виджет задач GARMENT BURO" onMouseDown={startDrag}>
         <header className="widget-header">
-          <span className="widget-animated-mark" aria-hidden="true">
-            <Image className="widget-mark-fallback" src="/assets/tray-mark.png" alt="" fill sizes="26px" />
-            <video src="/assets/logo_anim.mp4" autoPlay loop muted playsInline preload="auto" />
-          </span>
           <small
             className={state.dataHealth.usingSnapshot ? "widget-freshness is-stale" : "widget-freshness"}
           >
