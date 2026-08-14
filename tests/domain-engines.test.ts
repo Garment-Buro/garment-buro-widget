@@ -226,6 +226,7 @@ test("17b. Apps Script recovers partial writes before marking a session SYNCED",
   const entrypointCode = await readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
   const gatewayCode = await readFile(new URL("../apps-script/task-commands.gs", import.meta.url), "utf8");
   const driveContextCode = await readFile(new URL("../apps-script/drive-context.gs", import.meta.url), "utf8");
+  const manifestCode = await readFile(new URL("../apps-script/appsscript.json", import.meta.url), "utf8");
   const recoveryStart = gatewayCode.indexOf("function recoverCommandWrite_");
   const recoveryEnd = gatewayCode.indexOf("function askGptForTaskPlan_", recoveryStart);
   const recoveryCode = gatewayCode.slice(recoveryStart, recoveryEnd);
@@ -240,7 +241,13 @@ test("17b. Apps Script recovers partial writes before marking a session SYNCED",
   assert.match(entrypointCode, /capabilities: gatewayCapabilities_/);
   assert.doesNotMatch(entrypointCode, /gb_[a-f0-9]{32,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}/);
   assert.match(gatewayCode, /buildDriveTaskContext_/);
+  assert.match(gatewayCode, /exportGoogleWorkspaceText_\(masterPromptId\)/);
   assert.match(driveContextCode, /DRIVE_ROOT_FOLDER_ID/);
+  assert.match(driveContextCode, /\/drive\/v3\/files\//);
+  assert.match(driveContextCode, /ScriptApp\.getOAuthToken\(\)/);
+  assert.doesNotMatch(`${entrypointCode}\n${gatewayCode}\n${driveContextCode}`, /DocumentApp|SlidesApp/);
+  assert.match(manifestCode, /auth\/drive\.readonly/);
+  assert.doesNotMatch(manifestCode, /auth\/(?:documents|presentations)/);
   assert.doesNotThrow(() => new Function(`${entrypointCode}\n${driveContextCode}\n${gatewayCode}`));
 });
 

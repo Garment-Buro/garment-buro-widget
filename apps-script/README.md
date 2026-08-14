@@ -4,7 +4,7 @@ This folder is the complete Google Apps Script project for the widget:
 
 - `Code.gs` — protected Web app entrypoint, dashboard reads, capabilities and notification ACK writes.
 - `task-commands.gs` — GPT planning, constrained task mutations, sessions, idempotency and recovery.
-- `drive-context.gs` — task-scoped Drive discovery and readable Docs/Sheets/Slides context.
+- `drive-context.gs` — task-scoped Drive discovery and readable Docs/Sheets/Slides context via Drive export.
 - `appsscript.json` — V8 runtime and the minimum Google scopes required by the code.
 
 Do not keep the old read-only `doPost` beside `Code.gs`: Apps Script projects may only have one global `doPost` entrypoint.
@@ -97,7 +97,7 @@ Headers must be in the first row and use the exact names above.
 2. Add Apps Script files named `task-commands.gs` and `drive-context.gs` and paste their repository versions.
 3. Enable **Show `appsscript.json` manifest file in editor** and replace it with this folder's manifest.
 4. Add Script Properties.
-5. Select `authorizeGarmentWidget` in the editor, click **Run**, and approve Spreadsheet, Document, Drive and external-request permissions. A successful execution returns `ok: true`, `openAiHttp: 200`, and `model: gpt-5.6-terra`.
+5. Select `authorizeGarmentWidget` in the editor, click **Run**, and approve Spreadsheet, Drive and external-request permissions. Docs and Slides are read as plain text through Google Drive export, so separate Document/Presentation scopes are not required. A successful execution returns `ok: true`, a positive `masterPromptCharacters`, `openAiHttp: 200`, and `model: gpt-5.6-terra`.
 6. Select **Deploy → Manage deployments → Edit**.
 7. Choose **New version**, execute as **Me**, access **Anyone** (the endpoint is protected by `ACCESS_TOKEN`).
 8. Deploy and retain the `/exec` URL.

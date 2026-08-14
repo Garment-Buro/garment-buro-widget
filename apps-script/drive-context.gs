@@ -127,15 +127,36 @@ function rankDriveFiles_(files, request, task, taskContext) {
 function readDriveFileContent_(metadata, request, task, limit) {
   var content = "";
   if (metadata.mimeType === GB_DRIVE_DOC_MIME_) {
-    content = DocumentApp.openById(metadata.id).getBody().getText();
+    content = exportGoogleWorkspaceText_(metadata.id);
   } else if (metadata.mimeType === GB_DRIVE_SHEET_MIME_) {
     content = readRelevantSpreadsheetText_(metadata.id, request, task);
   } else if (metadata.mimeType === GB_DRIVE_SLIDES_MIME_) {
-    content = readPresentationText_(metadata.id);
+    content = exportGoogleWorkspaceText_(metadata.id);
   } else if (/^text\//.test(metadata.mimeType) || /json|csv|xml|markdown/.test(metadata.mimeType)) {
     content = DriveApp.getFileById(metadata.id).getBlob().getDataAsString("UTF-8");
   }
   return truncateDriveText_(content, limit);
+}
+
+function exportGoogleWorkspaceText_(fileId) {
+  var url = "https://www.googleapis.com/drive/v3/files/" +
+    encodeURIComponent(fileId) +
+    "/export?mimeType=" + encodeURIComponent("text/plain");
+  var response = UrlFetchApp.fetch(url, {
+    method: "get",
+    headers: {
+      Authorization: "Bearer " + ScriptApp.getOAuthToken()
+    },
+    muteHttpExceptions: true
+  });
+  var status = response.getResponseCode();
+  if (status < 200 || status >= 300) {
+    throw new Error(
+      "Google Drive export failed (HTTP " + status + "): " +
+      response.getContentText().slice(0, 300)
+    );
+  }
+  return response.getContentText("UTF-8");
 }
 
 function readRelevantSpreadsheetText_(spreadsheetId, request, task) {
@@ -157,32 +178,6 @@ function readRelevantSpreadsheetText_(spreadsheetId, request, task) {
     }
   });
   return sections.join("\n\n");
-}
-
-function readPresentationText_(presentationId) {
-  var presentation = SlidesApp.openById(presentationId);
-  var output = [];
-  presentation.getSlides().forEach(function (slide, slideIndex) {
-    var slideText = [];
-    slide.getPageElements().forEach(function (element) {
-      try {
-        if (element.getPageElementType().toString() === "SHAPE") {
-          var shapeText = element.asShape().getText().asString().trim();
-          if (shapeText) slideText.push(shapeText);
-        } else if (element.getPageElementType().toString() === "TABLE") {
-          var table = element.asTable();
-          for (var row = 0; row < table.getNumRows(); row += 1) {
-            for (var column = 0; column < table.getNumColumns(); column += 1) {
-              var cellText = table.getCell(row, column).getText().asString().trim();
-              if (cellText) slideText.push(cellText);
-            }
-          }
-        }
-      } catch (error) { /* unsupported page element */ }
-    });
-    if (slideText.length) output.push("[Слайд " + (slideIndex + 1) + "]\n" + slideText.join("\n"));
-  });
-  return output.join("\n\n");
 }
 
 function driveContextFile_(metadata, content, contentStatus) {

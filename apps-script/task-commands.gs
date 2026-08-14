@@ -142,7 +142,7 @@ function askGptForTaskPlan_(request, task, spreadsheet) {
   var apiKey = requiredProperty_("OPENAI_API_KEY");
   var model = optionalProperty_("OPENAI_MODEL", "gpt-5.6-terra");
   var masterPromptId = requiredProperty_("MASTER_PROMPT_DOCUMENT_ID");
-  var masterPrompt = DocumentApp.openById(masterPromptId).getBody().getText();
+  var masterPrompt = exportGoogleWorkspaceText_(masterPromptId);
   var recentUpdates = recentTaskUpdates_(spreadsheet, request.taskId, request.author, 20);
   var taskContext = findOptionalRecord_(spreadsheet, "TASK_CONTEXT", "TASK_ID", request.taskId);
   var playbooks = relatedPlaybooks_(spreadsheet, taskContext);

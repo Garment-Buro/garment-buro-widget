@@ -6,7 +6,7 @@
  * apps-script/README.md, then deploy a new version after every code change.
  */
 
-var GB_GATEWAY_VERSION_ = "1.1.0";
+var GB_GATEWAY_VERSION_ = "1.1.1";
 
 var GB_EXECUTION_SHEETS_ = {
   goals: "GOALS",
@@ -38,7 +38,9 @@ function doGet() {
 function authorizeGarmentWidget() {
   var execution = SpreadsheetApp.openById(requiredProperty_("EXECUTION_SPREADSHEET_ID")).getName();
   var control = SpreadsheetApp.openById(requiredProperty_("CONTROL_SPREADSHEET_ID")).getName();
-  var masterPrompt = DocumentApp.openById(requiredProperty_("MASTER_PROMPT_DOCUMENT_ID")).getName();
+  var masterPromptId = requiredProperty_("MASTER_PROMPT_DOCUMENT_ID");
+  var masterPrompt = DriveApp.getFileById(masterPromptId).getName();
+  var masterPromptCharacters = exportGoogleWorkspaceText_(masterPromptId).length;
   var driveRoot = DriveApp.getFolderById(requiredProperty_("DRIVE_ROOT_FOLDER_ID")).getName();
   var openAiResponse = UrlFetchApp.fetch("https://api.openai.com/v1/models", {
     method: "get",
@@ -51,6 +53,7 @@ function authorizeGarmentWidget() {
     execution: execution,
     control: control,
     masterPrompt: masterPrompt,
+    masterPromptCharacters: masterPromptCharacters,
     driveRoot: driveRoot,
     openAiHttp: openAiResponse.getResponseCode(),
     model: optionalProperty_("OPENAI_MODEL", "gpt-5.6-terra")
