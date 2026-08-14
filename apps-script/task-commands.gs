@@ -139,9 +139,8 @@ function recoverCommandWrite_(tasksSheet, updatesSheet, handoffsSheet, request, 
 }
 
 function askGptForTaskPlan_(request, task, spreadsheet) {
-  var properties = PropertiesService.getScriptProperties();
   var apiKey = requiredProperty_("OPENAI_API_KEY");
-  var model = String(properties.getProperty("OPENAI_MODEL") || "gpt-5.4-mini").trim();
+  var model = optionalProperty_("OPENAI_MODEL", "gpt-5.4-mini");
   var masterPromptId = requiredProperty_("MASTER_PROMPT_DOCUMENT_ID");
   var masterPrompt = DocumentApp.openById(masterPromptId).getBody().getText();
   var recentUpdates = recentTaskUpdates_(spreadsheet, request.taskId, request.author, 20);

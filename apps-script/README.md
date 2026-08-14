@@ -9,6 +9,23 @@ This folder is the complete Google Apps Script project for the widget:
 
 Do not keep the old read-only `doPost` beside `Code.gs`: Apps Script projects may only have one global `doPost` entrypoint.
 
+## Test all-in-one file
+
+For a temporary test deployment, generate one `Code.gs` containing the gateway,
+GPT commands, Drive context and inline configuration:
+
+```bash
+npm run apps-script:bundle
+```
+
+The command reads secrets from `.env.local` and writes
+`GB_WIDGET_ALL_IN_ONE.local.gs`. That generated file is ignored by Git. Copy it
+entirely into the Apps Script project's single `Code.gs`, delete other `.gs`
+files to avoid duplicate global declarations, save, and deploy a new Web app
+version. The Google service-account JSON is intentionally not embedded: Apps
+Script executes as the deployment owner and uses that owner's Drive/Sheets
+permissions.
+
 ## Script Properties
 
 Open **Project Settings → Script Properties** and add:

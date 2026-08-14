@@ -10,7 +10,8 @@
     "desktop:dev": "vite --config vite.desktop.config.ts --host 127.0.0.1 --port 1420",
     "desktop:build": "vite build --config vite.desktop.config.ts",
     "desktop": "tauri dev",
-    "desktop:bundle:windows": "tauri build --bundles nsis"
+    "desktop:bundle:windows": "tauri build --bundles nsis",
+    "apps-script:bundle": "node --env-file=.env.local apps-script/build-all-in-one.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

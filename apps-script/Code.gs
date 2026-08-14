@@ -190,9 +190,20 @@ function constantTimeEqual_(left, right) {
 }
 
 function requiredProperty_(name) {
-  var value = String(PropertiesService.getScriptProperties().getProperty(name) || "").trim();
+  var value = configuredValue_(name);
   if (!value) throw new Error(name + " не указан в Apps Script Properties.");
   return value;
+}
+
+function optionalProperty_(name, fallback) {
+  return configuredValue_(name) || String(fallback || "").trim();
+}
+
+function configuredValue_(name) {
+  var inlineValue = typeof GB_INLINE_CONFIG_ !== "undefined" && GB_INLINE_CONFIG_
+    ? GB_INLINE_CONFIG_[name]
+    : "";
+  return String(inlineValue || PropertiesService.getScriptProperties().getProperty(name) || "").trim();
 }
 
 function safeRequiredText_(value, label, maxLength) {
