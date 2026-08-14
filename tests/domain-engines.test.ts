@@ -223,6 +223,7 @@ test("17a. task actions use the GPT write command instead of a local mock", asyn
 });
 
 test("17b. Apps Script recovers partial writes before marking a session SYNCED", async () => {
+  const entrypointCode = await readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
   const gatewayCode = await readFile(new URL("../apps-script/task-commands.gs", import.meta.url), "utf8");
   const recoveryStart = gatewayCode.indexOf("function recoverCommandWrite_");
   const recoveryEnd = gatewayCode.indexOf("function askGptForTaskPlan_", recoveryStart);
@@ -233,6 +234,25 @@ test("17b. Apps Script recovers partial writes before marking a session SYNCED",
   assert.doesNotMatch(gatewayCode, /"ACTION_ID"/);
   assert.ok(recoveryCode.indexOf("verifyCommandWrite_") < recoveryCode.indexOf('"SYNCED"'));
   assert.match(gatewayCode, /requestedSession\.SYNC_STATUS === "SYNCED"/);
+  assert.match(entrypointCode, /action === "taskCommand"/);
+  assert.match(entrypointCode, /handleNotificationAckRequest_/);
+  assert.match(entrypointCode, /capabilities: gatewayCapabilities_/);
+  assert.doesNotMatch(entrypointCode, /gb_[a-f0-9]{32,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}/);
+  assert.doesNotThrow(() => new Function(`${entrypointCode}\n${gatewayCode}`));
+});
+
+test("17c. widget backend rebuilds trusted context and accepts only verified gateway writes", async () => {
+  const routeCode = await readFile(new URL("../app/api/task-command/route.ts", import.meta.url), "utf8");
+  const gatewayClientCode = await readFile(new URL("../lib/services/apps-script-gateway.ts", import.meta.url), "utf8");
+  const desktopCode = await readFile(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
+
+  assert.match(routeCode, /getDashboardState/);
+  assert.match(routeCode, /buildTaskAssistantClientContext/);
+  assert.match(routeCode, /result\.syncStatus !== "SYNCED"/);
+  assert.match(gatewayClientCode, /APPS_SCRIPT_ACCESS_TOKEN|appsScriptConfig\.accessToken/);
+  assert.doesNotMatch(desktopCode, /NOTIFICATIONS_SHEET_GID/);
+  assert.match(desktopCode, /syncStatus/);
+  assert.match(desktopCode, /ack_notification/);
 });
 
 test("18. dashboard person selection is case-insensitive and never falls back to another employee", () => {
@@ -301,6 +321,7 @@ test("23. push notifications are delivered only to their factual recipient", () 
   assert.deepEqual(activePushNotifications([notification], "P-NIKITA"), []);
   assert.deepEqual(activePushNotifications([notification], "p-kostya").map((item) => item.id), ["NTF-1"]);
   assert.deepEqual(activePushNotifications([{ ...notification, status: "RESOLVED" }], "P-KOSTYA"), []);
+  assert.deepEqual(activePushNotifications([{ ...notification, ackAt: "14.08.2026 12:00" }], "P-KOSTYA"), []);
 });
 
 function progress(goalValue: Goal, gates: ProgressGate[], currentTask: Task | null = null, events: ChangeEvent[] = []) {

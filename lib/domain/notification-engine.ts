@@ -13,6 +13,7 @@ export function activePushNotifications(
     && notification.push
     && notification.recipientId.trim().toLocaleLowerCase("ru") === normalizedRecipient
     && !closedStatuses.has(notification.status.trim().toUpperCase())
+    && !notification.ackAt
     && !notification.resolvedAt
   ));
 }

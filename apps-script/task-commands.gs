@@ -19,11 +19,23 @@ var GB_TASK_STATUSES_ = [
   "CANCELLED"
 ];
 
+var GB_TASK_COMMAND_INTENTS_ = [
+  "accept",
+  "reject",
+  "stuck",
+  "waiting",
+  "fact",
+  "done",
+  "session_start",
+  "session_close"
+];
+
 function handleTaskCommandRequest_(payload) {
   var request = payload && payload.request;
   if (!request || !request.commandId || !request.taskId || !request.intent) {
     throw new Error("Некорректная taskCommand-команда.");
   }
+  validateCommandRequest_(request);
 
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -34,6 +46,8 @@ function handleTaskCommandRequest_(payload) {
     var handoffsSheet = requireSheet_(spreadsheet, "SESSION_HANDOFFS");
     var task = findRecord_(tasksSheet, "TASK_ID", request.taskId);
     if (!task) throw new Error("Задача " + request.taskId + " не найдена.");
+    assertCommandActor_(spreadsheet, request, task);
+    assertCommandTransition_(request, task);
 
     var duplicate = findRecord_(updatesSheet, "UPDATE_ID", updateIdForCommand_(request.commandId));
     var requestedSession = request.intent === "session_close" && request.details && request.details.sessionId
@@ -76,12 +90,14 @@ function handleTaskCommandRequest_(payload) {
       }
 
       verifyCommandWrite_(tasksSheet, updatesSheet, request, plan);
+      updateTaskUpdateSyncStatus_(updatesSheet, request.commandId, "SYNCED");
       if (sessionRow) updateSessionSyncStatus_(handoffsSheet, sessionRow.__rowNumber, "SYNCED");
       return {
         ok: true,
         commandResult: buildCommandResult_(request, plan.targetStatus === "UNCHANGED" ? task.STATUS : plan.targetStatus, "SYNCED", plan.assistantMessage)
       };
     } catch (writeError) {
+      updateTaskUpdateSyncStatus_(updatesSheet, request.commandId, "PARTIAL_SYNC");
       if (sessionRow) updateSessionSyncStatus_(handoffsSheet, sessionRow.__rowNumber, "PARTIAL_SYNC");
       throw writeError;
     }
@@ -108,6 +124,7 @@ function recoverCommandWrite_(tasksSheet, updatesSheet, handoffsSheet, request, 
     taskId: request.taskId
   };
   verifyCommandWrite_(tasksSheet, updatesSheet, verificationRequest, plan);
+  updateTaskUpdateSyncStatus_(updatesSheet, snapshot.commandId, "SYNCED");
   if (sessionRow) updateSessionSyncStatus_(handoffsSheet, sessionRow.__rowNumber, "SYNCED");
   var verifiedTask = findRecord_(tasksSheet, "TASK_ID", request.taskId);
   return {
@@ -123,13 +140,13 @@ function recoverCommandWrite_(tasksSheet, updatesSheet, handoffsSheet, request, 
 
 function askGptForTaskPlan_(request, task, spreadsheet) {
   var properties = PropertiesService.getScriptProperties();
-  var apiKey = String(properties.getProperty("OPENAI_API_KEY") || "").trim();
-  if (!apiKey) throw new Error("OPENAI_API_KEY не указан в Apps Script Properties.");
-  var model = String(properties.getProperty("OPENAI_MODEL") || "gpt-5.6-terra").trim();
-  var masterPromptId = String(properties.getProperty("MASTER_PROMPT_DOCUMENT_ID") || "").trim();
-  if (!masterPromptId) throw new Error("MASTER_PROMPT_DOCUMENT_ID не указан в Apps Script Properties.");
+  var apiKey = requiredProperty_("OPENAI_API_KEY");
+  var model = String(properties.getProperty("OPENAI_MODEL") || "gpt-5.4-mini").trim();
+  var masterPromptId = requiredProperty_("MASTER_PROMPT_DOCUMENT_ID");
   var masterPrompt = DocumentApp.openById(masterPromptId).getBody().getText();
   var recentUpdates = recentTaskUpdates_(spreadsheet, request.taskId, request.author, 20);
+  var taskContext = findOptionalRecord_(spreadsheet, "TASK_CONTEXT", "TASK_ID", request.taskId);
+  var playbooks = relatedPlaybooks_(spreadsheet, taskContext);
   var instructions = [
     masterPrompt,
     "RUNTIME CONTRACT TASK COMMAND:",
@@ -151,6 +168,8 @@ function askGptForTaskPlan_(request, task, spreadsheet) {
     nextCheckDate: request.details && request.details.nextCheckDate,
     session: request.details,
     task: task,
+    taskContext: taskContext,
+    relatedPlaybooks: playbooks,
     recentTaskUpdates: recentUpdates,
     clientContext: request.context
   });
@@ -179,6 +198,9 @@ function askGptForTaskPlan_(request, task, spreadsheet) {
     throw new Error("OpenAI API: " + response.getResponseCode() + " " + response.getContentText().slice(0, 500));
   }
   var payload = JSON.parse(response.getContentText());
+  if (payload.status === "incomplete") {
+    throw new Error("GPT не завершила structured plan: " + JSON.stringify(payload.incomplete_details || {}));
+  }
   var outputText = readOpenAiOutputText_(payload);
   if (!outputText) throw new Error("GPT не вернула structured plan.");
   return JSON.parse(outputText);
@@ -221,15 +243,105 @@ function validateTaskPlan_(request, task, plan) {
   if (forcedStatuses[request.intent]) plan.targetStatus = forcedStatuses[request.intent];
   if (request.intent === "accept") plan.updateType = "START_PLAN";
   if (request.intent === "stuck") plan.updateType = "BLOCKER";
+  if (request.intent === "waiting") plan.updateType = "COMMENT";
   if (request.intent === "fact") {
     plan.targetStatus = "UNCHANGED";
     plan.updateType = "NEW_FACT";
   }
-  if (request.intent === "done") plan.updateType = "COMPLETION";
-  if (request.intent === "reject" && plan.targetStatus === "CANCELLED") plan.targetStatus = "UNCHANGED";
+  if (request.intent === "done") {
+    plan.updateType = "COMPLETION";
+    if (["DONE", "REVIEW", "IN_PROGRESS"].indexOf(plan.targetStatus) < 0) plan.targetStatus = "REVIEW";
+  }
+  if (request.intent === "reject") {
+    plan.targetStatus = "UNCHANGED";
+    plan.updateType = "COMMENT";
+  }
   if (plan.requiresApproval && ["DONE", "CANCELLED"].indexOf(plan.targetStatus) >= 0) plan.targetStatus = "REVIEW";
-  if (request.intent === "session_start") plan.targetStatus = task.STATUS === "READY" ? "IN_PROGRESS" : "UNCHANGED";
+  if (request.intent === "session_start") {
+    plan.targetStatus = ["READY", "BACKLOG"].indexOf(task.STATUS) >= 0 ? "IN_PROGRESS" : "UNCHANGED";
+    plan.updateType = "START_PLAN";
+  }
+  if (request.intent === "session_close") {
+    plan.targetStatus = "UNCHANGED";
+    plan.updateType = "PROGRESS";
+  }
   return plan;
+}
+
+function validateCommandRequest_(request) {
+  request.commandId = safeRequiredText_(request.commandId, "commandId", 120);
+  request.taskId = safeRequiredText_(request.taskId, "taskId", 120);
+  request.author = safeRequiredText_(request.author, "AUTHOR", 120);
+  request.personId = safeRequiredText_(request.personId, "PERSON_ID", 120);
+  request.intent = safeRequiredText_(request.intent, "intent", 40);
+  if (GB_TASK_COMMAND_INTENTS_.indexOf(request.intent) < 0) {
+    throw new Error("Недопустимая taskCommand-команда: " + request.intent);
+  }
+  request.details = request.details && typeof request.details === "object" ? request.details : {};
+  request.details.note = String(request.details.note || "").trim();
+  if (["reject", "stuck", "waiting", "fact", "done", "session_close"].indexOf(request.intent) >= 0 && !request.details.note) {
+    throw new Error("Добавьте короткий комментарий для GPT.");
+  }
+  if (request.details.note.length > 4000) throw new Error("Комментарий длиннее 4000 символов.");
+  if (["session_start", "session_close"].indexOf(request.intent) >= 0) {
+    request.details.sessionId = safeRequiredText_(request.details.sessionId, "SESSION_ID", 160);
+  }
+}
+
+function assertCommandActor_(spreadsheet, request, task) {
+  var peopleSheet = requireSheet_(spreadsheet, "PEOPLE");
+  var person = findRecord_(peopleSheet, "PERSON_ID", request.personId);
+  if (!person || normalizeText_(person.NAME) !== normalizeText_(request.author)) {
+    throw new Error("AUTHOR не совпадает с записью PEOPLE.");
+  }
+  if (String(person.ACTIVE || "").trim().toUpperCase() !== "TRUE") {
+    throw new Error("Сотрудник не активен в PEOPLE.");
+  }
+  if (!ownerIncludesAuthor_(task.OWNER, request.author)) {
+    throw new Error("Задача " + request.taskId + " не назначена сотруднику " + request.author + ".");
+  }
+}
+
+function assertCommandTransition_(request, task) {
+  var status = String(task.STATUS || "").trim().toUpperCase();
+  var terminal = ["DONE", "CANCELLED"].indexOf(status) >= 0;
+  if (terminal) throw new Error("Закрытую задачу нельзя изменить через виджет.");
+  if (request.intent === "reject" && ["BACKLOG", "READY"].indexOf(status) < 0) {
+    throw new Error("Отклонить можно только ещё не принятую задачу.");
+  }
+  if (request.intent === "accept" && ["BACKLOG", "READY"].indexOf(status) < 0) {
+    throw new Error("Задача уже принята или недоступна для старта.");
+  }
+  if (request.intent === "session_start" && status !== "IN_PROGRESS") {
+    throw new Error("Рабочую сессию можно начать только для IN_PROGRESS.");
+  }
+  if (request.intent === "fact" && ["IN_PROGRESS", "WAITING_EXTERNAL", "BLOCKED", "REVIEW"].indexOf(status) < 0) {
+    throw new Error("Новый факт можно добавить только после принятия задачи.");
+  }
+}
+
+function ownerIncludesAuthor_(owner, author) {
+  var target = normalizeText_(author);
+  return String(owner || "")
+    .split(/[\/,;→]/)
+    .map(function (part) { return normalizeText_(part); })
+    .some(function (part) { return part === target; });
+}
+
+function findOptionalRecord_(spreadsheet, sheetTitle, header, value) {
+  var sheet = spreadsheet.getSheetByName(sheetTitle);
+  return sheet ? findRecord_(sheet, header, value) : null;
+}
+
+function relatedPlaybooks_(spreadsheet, taskContext) {
+  var sheet = spreadsheet.getSheetByName("PLAYBOOKS");
+  if (!sheet) return [];
+  var contextText = JSON.stringify(taskContext || {});
+  var references = contextText.match(/PB-\d+/g) || [];
+  if (references.indexOf("PB-002") < 0) references.push("PB-002");
+  return records_(sheet).filter(function (row) {
+    return references.indexOf(String(row.PLAYBOOK_ID || "").trim()) >= 0;
+  });
 }
 
 function appendTaskUpdate_(sheet, request, task, plan) {
@@ -248,7 +360,21 @@ function appendTaskUpdate_(sheet, request, task, plan) {
   setByHeader_(row, headers, "IMPACT_LEVEL", "LOCAL");
   setByHeader_(row, headers, "ROUTE_EFFECT", planSnapshotText_(request, plan));
   setByHeader_(row, headers, "NEEDS_KOSTYA", plan.requiresApproval ? "YES" : "NO");
+  setByHeader_(row, headers, "SYNC_STATUS", "PENDING_CAPTURE");
+  setByHeader_(row, headers, "LAST_UPDATED", nowText_());
   sheet.appendRow(row);
+}
+
+function updateTaskUpdateSyncStatus_(sheet, commandId, status) {
+  var update = findRecord_(sheet, "UPDATE_ID", updateIdForCommand_(commandId));
+  if (!update) return;
+  var headers = headers_(sheet);
+  if (headers.indexOf("SYNC_STATUS") >= 0) {
+    setCellByHeader_(sheet, update.__rowNumber, headers, "SYNC_STATUS", status);
+  }
+  if (headers.indexOf("LAST_UPDATED") >= 0) {
+    setCellByHeader_(sheet, update.__rowNumber, headers, "LAST_UPDATED", nowText_());
+  }
 }
 
 function updateTaskFromPlan_(sheet, rowNumber, plan) {
@@ -334,10 +460,7 @@ function recentTaskUpdates_(spreadsheet, taskId, author, limit) {
 }
 
 function openExecutionSpreadsheet_() {
-  var properties = PropertiesService.getScriptProperties();
-  var id = String(properties.getProperty("EXECUTION_SPREADSHEET_ID") || "").trim();
-  if (!id) throw new Error("EXECUTION_SPREADSHEET_ID не указан в Apps Script Properties.");
-  return SpreadsheetApp.openById(id);
+  return SpreadsheetApp.openById(requiredProperty_("EXECUTION_SPREADSHEET_ID"));
 }
 
 function requireSheet_(spreadsheet, title) {

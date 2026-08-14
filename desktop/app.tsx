@@ -9,6 +9,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { DashboardClient } from "@/components/dashboard-client";
 import { WidgetClient } from "@/components/widget-client";
 import { activePushNotifications } from "@/lib/domain/notification-engine";
+import { acknowledgeNotification } from "@/lib/services/notification-service";
 import type { DashboardState } from "@/lib/types";
 import { loadDesktopDashboard } from "./data";
 
@@ -35,7 +36,7 @@ export function DesktopApp() {
     if (!settings) throw new Error("Сначала введите код доступа.");
     const dashboard = await loadDesktopDashboard(settings.accessToken, settings.personName);
     setState(dashboard);
-    await deliverProjectNotifications(dashboard);
+    await deliverProjectNotifications(dashboard, settings.accessToken);
     return dashboard;
   }, [settings]);
 
@@ -51,7 +52,7 @@ export function DesktopApp() {
 
         const savedSettings = { accessToken, personName };
         const dashboard = await loadDesktopDashboard(accessToken, personName);
-        await deliverProjectNotifications(dashboard);
+        await deliverProjectNotifications(dashboard, accessToken);
         await ensureAutostart();
         if (!cancelled) {
           setSettings(savedSettings);
@@ -105,7 +106,7 @@ export function DesktopApp() {
       await store.set("personName", personName);
       await store.save();
       await ensureAutostart();
-      await deliverProjectNotifications(dashboard);
+      await deliverProjectNotifications(dashboard, accessToken);
       setSettings({ accessToken, personName });
       setState(dashboard);
     } catch (activationError) {
@@ -221,18 +222,22 @@ async function ensureAutostart() {
   }
 }
 
-function deliverProjectNotifications(state: DashboardState): Promise<void> {
+function deliverProjectNotifications(state: DashboardState, accessToken: string): Promise<void> {
   const run = notificationDelivery.then(async () => {
     const recipientId = state.person?.id.trim().toLocaleLowerCase("ru");
     if (!recipientId) return;
 
-    const pending = activePushNotifications(state.notifications || [], recipientId)
-      .filter((notification) => !deliveredInProcess.has(notification.id));
+    const pending = activePushNotifications(state.notifications || [], recipientId);
     if (!pending.length) return;
 
     const store = await load(settingsFile, { autoSave: true });
     const delivered = new Set((await store.get<string[]>(deliveredNotificationsKey)) || []);
-    const fresh = pending.filter((notification) => !delivered.has(notification.id));
+    const alreadyDelivered = pending.filter((notification) => delivered.has(notification.id));
+    for (const notification of alreadyDelivered) {
+      await acknowledgeNotification(accessToken, notification.id, recipientId).catch(() => undefined);
+    }
+
+    const fresh = pending.filter((notification) => !delivered.has(notification.id) && !deliveredInProcess.has(notification.id));
     if (!fresh.length) return;
 
     let permissionGranted = await isPermissionGranted();
@@ -246,6 +251,7 @@ function deliverProjectNotifications(state: DashboardState): Promise<void> {
       });
       delivered.add(notification.id);
       deliveredInProcess.add(notification.id);
+      await acknowledgeNotification(accessToken, notification.id, recipientId).catch(() => undefined);
     }
     await store.set(deliveredNotificationsKey, [...delivered].slice(-250));
     await store.save();

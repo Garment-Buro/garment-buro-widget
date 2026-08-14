@@ -12,7 +12,6 @@ const DATA_ENDPOINT: &str = "https://script.google.com/macros/s/AKfycbwPihtIvUQu
 const EXECUTION_SHEET_ID: &str = "1LfhEpCwKrWTww8SvTUVrIofX1bJ1QmU0m7gbruZB0Qg";
 const MASTER_PROMPT_DOCUMENT_ID: &str = "1_EBiiqM_7c0FxpXbmfZpAg1-POaftWRm26EIvSflwJk";
 const WIDGET_BRIEF_DOCUMENT_ID: &str = "1PKxVgMn7NyL0Kn55WPsODdMK8Fu_IibHsnH5Nv3A0u8";
-const NOTIFICATIONS_SHEET_GID: &str = "1015";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,7 +31,7 @@ async fn fetch_dashboard_data(token: String) -> Result<Value, String> {
   let client = reqwest::Client::new();
   let response = client
     .post(DATA_ENDPOINT)
-    .json(&json!({ "token": token }))
+    .json(&json!({ "token": token, "action": "dashboard" }))
     .send()
     .await
     .map_err(|error| format!("Не удалось подключиться к данным: {error}"))?;
@@ -41,28 +40,10 @@ async fn fetch_dashboard_data(token: String) -> Result<Value, String> {
     return Err(format!("Сервис данных ответил с ошибкой {}", response.status()));
   }
 
-  let mut payload = response
+  let payload = response
     .json::<Value>()
     .await
     .map_err(|error| format!("Сервис данных вернул неверный ответ: {error}"))?;
-
-  let notifications_url = format!(
-    "https://docs.google.com/spreadsheets/d/{EXECUTION_SHEET_ID}/export?format=csv&gid={NOTIFICATIONS_SHEET_GID}"
-  );
-  match fetch_text(&client, &notifications_url, "NOTIFICATIONS").await
-    .and_then(|csv| csv_to_rows(&csv, "NOTIFICATIONS"))
-  {
-    Ok(rows) => {
-      if let Some(data) = payload.get_mut("data").and_then(Value::as_object_mut) {
-        data.insert("notifications".into(), json!(rows));
-      }
-    }
-    Err(error) => {
-      if let Some(root) = payload.as_object_mut() {
-        root.insert("notificationsError".into(), json!(error));
-      }
-    }
-  }
 
   Ok(payload)
 }
@@ -100,9 +81,59 @@ async fn submit_task_command(token: String, request: Value) -> Result<Value, Str
       .unwrap_or("GPT не смог зафиксировать команду")
       .to_string());
   }
-  payload.get("commandResult")
+  let result = payload.get("commandResult")
     .cloned()
-    .ok_or_else(|| "Развёрнутый Apps Script пока не поддерживает запись taskCommand.".to_string())
+    .ok_or_else(|| "Развёрнутый Apps Script пока не поддерживает запись taskCommand.".to_string())?;
+  if result.get("syncStatus").and_then(Value::as_str) != Some("SYNCED") {
+    return Err(format!(
+      "Команда не подтверждена: {}",
+      result.get("syncStatus").and_then(Value::as_str).unwrap_or("UNKNOWN")
+    ));
+  }
+  Ok(result)
+}
+
+#[tauri::command]
+async fn ack_notification(token: String, notification_id: String, recipient_id: String) -> Result<Value, String> {
+  if token.trim().is_empty() || notification_id.trim().is_empty() || recipient_id.trim().is_empty() {
+    return Err("Не хватает данных для подтверждения уведомления".into());
+  }
+  load_local_environment();
+  let endpoint = env::var("APPS_SCRIPT_WEB_APP_URL")
+    .ok()
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty())
+    .unwrap_or_else(|| DATA_ENDPOINT.to_string());
+  let client = reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(30))
+    .build()
+    .map_err(|error| format!("Не удалось подготовить ACK-клиент: {error}"))?;
+  let response = client
+    .post(endpoint)
+    .json(&json!({
+      "token": token,
+      "action": "notificationAck",
+      "request": { "notificationId": notification_id, "recipientId": recipient_id }
+    }))
+    .send()
+    .await
+    .map_err(|error| format!("Не удалось подтвердить уведомление: {error}"))?;
+  if !response.status().is_success() {
+    return Err(format!("Apps Script вернул ошибку {}", response.status()));
+  }
+  let payload = response.json::<Value>().await
+    .map_err(|error| format!("Apps Script вернул неверный ACK-ответ: {error}"))?;
+  if payload.get("ok").and_then(Value::as_bool) != Some(true) {
+    return Err(payload.get("error").and_then(Value::as_str)
+      .unwrap_or("Apps Script не подтвердил уведомление")
+      .to_string());
+  }
+  let ack = payload.get("notificationAck").cloned()
+    .ok_or_else(|| "Apps Script не вернул notificationAck".to_string())?;
+  if ack.get("syncStatus").and_then(Value::as_str) != Some("SYNCED") {
+    return Err("ACK_AT не подтверждён повторным чтением".into());
+  }
+  Ok(ack)
 }
 
 #[tauri::command]
@@ -241,22 +272,6 @@ async fn fetch_text(client: &reqwest::Client, url: &str, title: &str) -> Result<
     return Err(format!("Источник «{title}» пуст или недоступен"));
   }
   Ok(text)
-}
-
-fn csv_to_rows(input: &str, title: &str) -> Result<Vec<Vec<String>>, String> {
-  let mut reader = csv::ReaderBuilder::new()
-    .has_headers(false)
-    .flexible(true)
-    .from_reader(input.as_bytes());
-  let mut rows = Vec::new();
-  for record in reader.records() {
-    let record = record.map_err(|error| format!("Не удалось прочитать строку {title}: {error}"))?;
-    let row = record.iter().map(str::to_string).collect::<Vec<_>>();
-    if rows.is_empty() || row.first().is_some_and(|value| !value.trim().is_empty()) {
-      rows.push(row);
-    }
-  }
-  Ok(rows)
 }
 
 fn validate_assistant_request(request: &TaskAssistantRequest) -> Result<(), String> {
@@ -499,6 +514,7 @@ pub fn run() {
       fetch_dashboard_data,
       ask_task_assistant,
       submit_task_command,
+      ack_notification,
       open_dashboard_window,
       collapse_widget_window,
       hide_main_window,
