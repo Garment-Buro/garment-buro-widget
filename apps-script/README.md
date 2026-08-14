@@ -26,6 +26,11 @@ version. The Google service-account JSON is intentionally not embedded: Apps
 Script executes as the deployment owner and uses that owner's Drive/Sheets
 permissions.
 
+`appsscript.json` remains a separate Apps Script manifest and cannot be placed
+inside `Code.gs`. Enable **Show appsscript.json manifest file in editor** in
+Project Settings and paste the repository manifest before running
+`authorizeGarmentWidget`.
+
 ## Script Properties
 
 Open **Project Settings → Script Properties** and add:
