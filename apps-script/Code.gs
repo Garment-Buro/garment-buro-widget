@@ -31,6 +31,32 @@ function doGet() {
   });
 }
 
+/**
+ * Run once from the Apps Script editor after pasting the all-in-one file.
+ * It performs read-only calls so Google can grant every scope used at runtime.
+ */
+function authorizeGarmentWidget() {
+  var execution = SpreadsheetApp.openById(requiredProperty_("EXECUTION_SPREADSHEET_ID")).getName();
+  var control = SpreadsheetApp.openById(requiredProperty_("CONTROL_SPREADSHEET_ID")).getName();
+  var masterPrompt = DocumentApp.openById(requiredProperty_("MASTER_PROMPT_DOCUMENT_ID")).getName();
+  var driveRoot = DriveApp.getFolderById(requiredProperty_("DRIVE_ROOT_FOLDER_ID")).getName();
+  var openAiResponse = UrlFetchApp.fetch("https://api.openai.com/v1/models", {
+    method: "get",
+    headers: { Authorization: "Bearer " + requiredProperty_("OPENAI_API_KEY") },
+    muteHttpExceptions: true
+  });
+
+  return {
+    ok: true,
+    execution: execution,
+    control: control,
+    masterPrompt: masterPrompt,
+    driveRoot: driveRoot,
+    openAiHttp: openAiResponse.getResponseCode(),
+    model: optionalProperty_("OPENAI_MODEL", "gpt-5.6-terra")
+  };
+}
+
 function doPost(event) {
   try {
     var payload = parseRequestPayload_(event);

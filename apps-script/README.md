@@ -92,7 +92,7 @@ Headers must be in the first row and use the exact names above.
 2. Add Apps Script files named `task-commands.gs` and `drive-context.gs` and paste their repository versions.
 3. Enable **Show `appsscript.json` manifest file in editor** and replace it with this folder's manifest.
 4. Add Script Properties.
-5. Run any function once from the editor and approve Spreadsheet, Document and external-request permissions.
+5. Select `authorizeGarmentWidget` in the editor, click **Run**, and approve Spreadsheet, Document, Drive and external-request permissions. A successful execution returns `ok: true`, `openAiHttp: 200`, and `model: gpt-5.6-terra`.
 6. Select **Deploy → Manage deployments → Edit**.
 7. Choose **New version**, execute as **Me**, access **Anyone** (the endpoint is protected by `ACCESS_TOKEN`).
 8. Deploy and retain the `/exec` URL.

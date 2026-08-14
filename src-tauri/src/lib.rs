@@ -8,7 +8,7 @@ use tauri::{
   AppHandle, Emitter, LogicalSize, Manager, Size, WindowEvent,
 };
 
-const DATA_ENDPOINT: &str = "https://script.google.com/macros/s/AKfycby6TMvtASMfNOr95eLgkipoA3MqC9ZbvDnNgWAxckv-jQ8v0PMMC_D8So8vZdSyDJLypQ/exec";
+const DATA_ENDPOINT: &str = "https://script.google.com/macros/s/AKfycbyB3cZ89j5u8r9HVfTcHyZ-3HCYXQCNHXn6mr5TU9NgiGHxyeZbOk1KTiBHpi4M-ZlGYg/exec";
 const EXECUTION_SHEET_ID: &str = "1LfhEpCwKrWTww8SvTUVrIofX1bJ1QmU0m7gbruZB0Qg";
 const MASTER_PROMPT_DOCUMENT_ID: &str = "1_EBiiqM_7c0FxpXbmfZpAg1-POaftWRm26EIvSflwJk";
 const WIDGET_BRIEF_DOCUMENT_ID: &str = "1PKxVgMn7NyL0Kn55WPsODdMK8Fu_IibHsnH5Nv3A0u8";
