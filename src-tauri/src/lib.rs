@@ -2,6 +2,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{env, path::Path};
 use tauri::{
+  image::Image,
   menu::{Menu, MenuItem},
   tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
   AppHandle, Emitter, LogicalSize, Manager, Size, WindowEvent,
@@ -11,6 +12,7 @@ const DATA_ENDPOINT: &str = "https://script.google.com/macros/s/AKfycbwPihtIvUQu
 const EXECUTION_SHEET_ID: &str = "1LfhEpCwKrWTww8SvTUVrIofX1bJ1QmU0m7gbruZB0Qg";
 const MASTER_PROMPT_DOCUMENT_ID: &str = "1_EBiiqM_7c0FxpXbmfZpAg1-POaftWRm26EIvSflwJk";
 const WIDGET_BRIEF_DOCUMENT_ID: &str = "1PKxVgMn7NyL0Kn55WPsODdMK8Fu_IibHsnH5Nv3A0u8";
+const NOTIFICATIONS_SHEET_GID: &str = "1015";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,7 +29,8 @@ async fn fetch_dashboard_data(token: String) -> Result<Value, String> {
     return Err("Код доступа не указан".into());
   }
 
-  let response = reqwest::Client::new()
+  let client = reqwest::Client::new();
+  let response = client
     .post(DATA_ENDPOINT)
     .json(&json!({ "token": token }))
     .send()
@@ -38,10 +41,30 @@ async fn fetch_dashboard_data(token: String) -> Result<Value, String> {
     return Err(format!("Сервис данных ответил с ошибкой {}", response.status()));
   }
 
-  response
+  let mut payload = response
     .json::<Value>()
     .await
-    .map_err(|error| format!("Сервис данных вернул неверный ответ: {error}"))
+    .map_err(|error| format!("Сервис данных вернул неверный ответ: {error}"))?;
+
+  let notifications_url = format!(
+    "https://docs.google.com/spreadsheets/d/{EXECUTION_SHEET_ID}/export?format=csv&gid={NOTIFICATIONS_SHEET_GID}"
+  );
+  match fetch_text(&client, &notifications_url, "NOTIFICATIONS").await
+    .and_then(|csv| csv_to_rows(&csv, "NOTIFICATIONS"))
+  {
+    Ok(rows) => {
+      if let Some(data) = payload.get_mut("data").and_then(Value::as_object_mut) {
+        data.insert("notifications".into(), json!(rows));
+      }
+    }
+    Err(error) => {
+      if let Some(root) = payload.as_object_mut() {
+        root.insert("notificationsError".into(), json!(error));
+      }
+    }
+  }
+
+  Ok(payload)
 }
 
 #[tauri::command]
@@ -180,6 +203,22 @@ async fn fetch_text(client: &reqwest::Client, url: &str, title: &str) -> Result<
     return Err(format!("Источник «{title}» пуст или недоступен"));
   }
   Ok(text)
+}
+
+fn csv_to_rows(input: &str, title: &str) -> Result<Vec<Vec<String>>, String> {
+  let mut reader = csv::ReaderBuilder::new()
+    .has_headers(false)
+    .flexible(true)
+    .from_reader(input.as_bytes());
+  let mut rows = Vec::new();
+  for record in reader.records() {
+    let record = record.map_err(|error| format!("Не удалось прочитать строку {title}: {error}"))?;
+    let row = record.iter().map(str::to_string).collect::<Vec<_>>();
+    if rows.is_empty() || row.first().is_some_and(|value| !value.trim().is_empty()) {
+      rows.push(row);
+    }
+  }
+  Ok(rows)
 }
 
 fn validate_assistant_request(request: &TaskAssistantRequest) -> Result<(), String> {
@@ -415,6 +454,7 @@ fn show_widget(app: &AppHandle) {
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_store::Builder::default().build())
+    .plugin(tauri_plugin_notification::init())
     .plugin(tauri_plugin_autostart::Builder::new().app_name("GARMENT BURO").build())
     .plugin(tauri_plugin_process::init())
     .invoke_handler(tauri::generate_handler![
@@ -441,8 +481,9 @@ pub fn run() {
       let quit_item = MenuItem::with_id(app, "quit", "Выйти", true, None::<&str>)?;
       let menu = Menu::with_items(app, &[&show_item, &dashboard_item, &pin_item, &quit_item])?;
 
+      let tray_icon = Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?;
       TrayIconBuilder::new()
-        .icon(app.default_window_icon().expect("application icon").clone())
+        .icon(tray_icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {

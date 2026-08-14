@@ -1976,17 +1976,17 @@ input:focus-visible {
 
 .personal-page .person-artwork-full {
   min-height: 0;
-  height: 320px;
-  flex: 1 1 auto;
+  height: min(39vh, 340px);
+  flex: 0 0 auto;
   border-bottom: 1px solid var(--line);
-  margin: 18px 0 0;
+  margin: 10px 0 0;
 }
 
 .personal-page .person-artwork-full .person-asset-image {
   object-fit: contain;
-  object-position: center bottom;
+  object-position: center top;
   transform: scale(1.04);
-  transform-origin: center bottom;
+  transform-origin: center top;
 }
 
 .personal-page .identity-stats {
@@ -3102,6 +3102,64 @@ input:focus-visible {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
+}
+
+.widget-animated-mark {
+  position: relative;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  place-items: center;
+  border-radius: 50%;
+  animation: widget-mark-orbit 12s linear infinite;
+}
+
+.widget-animated-mark video {
+  position: relative;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  object-fit: cover;
+  mix-blend-mode: multiply;
+}
+
+.widget-animated-mark .widget-mark-fallback {
+  object-fit: contain;
+}
+
+@keyframes widget-mark-orbit {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .widget-animated-mark { animation: none; }
+}
+
+.widget-notification-indicator {
+  position: relative;
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  color: #4f4f4b;
+}
+
+.widget-notification-indicator b {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  min-width: 13px;
+  height: 13px;
+  place-items: center;
+  border-radius: 999px;
+  padding: 0 3px;
+  background: var(--orange);
+  color: white;
+  font-size: 8px;
+  line-height: 1;
 }
 
 .widget-freshness {

@@ -12,6 +12,7 @@ export class MockDataSource {
       changeEvents,
       people,
       issues,
+      notifications: [["NOTIFICATION_ID", "RECIPIENT_ID"]],
       now,
       sources: [
         makeSourceStatus("execution", true),

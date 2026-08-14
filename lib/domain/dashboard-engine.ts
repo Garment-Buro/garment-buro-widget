@@ -46,18 +46,18 @@ export function buildDashboardDomain({
   const selectedGoal = goals.find((item) => item.id === goalId) || null;
   const goalTasks = selectedGoal ? tasks.filter((task) => task.goalId === selectedGoal.id) : tasks;
   const goalGates = selectedGoal ? gates.filter((gate) => gate.goalId === selectedGoal.id) : gates;
-  const currentTask = person ? selectCurrentTask(person, goalTasks, goalGates) : null;
-  const dependencies = buildDependencySummary(currentTask, goalTasks, goalGates);
+  const currentTask = person ? selectCurrentTask(person, tasks, gates) : null;
+  const dependencies = buildDependencySummary(currentTask, tasks, gates);
   const progressResult = calculateProgress(selectedGoal, goalGates, currentTask, dependencies, events);
   const waitingTask = currentTask?.status === "WAITING_EXTERNAL"
     ? currentTask
     : person
-      ? goalTasks.find((task) => task.owner === person.name && task.status === "WAITING_EXTERNAL") || null
+      ? tasks.find((task) => task.owner === person.name && task.status === "WAITING_EXTERNAL") || null
       : null;
   const projectGraph = buildProjectGraph(progressResult.goal, milestones, goalGates, goalTasks, people);
   const dataHealth = calculateDataHealth({
     person,
-    tasks: goalTasks,
+    tasks,
     gates: goalGates,
     people,
     milestones,

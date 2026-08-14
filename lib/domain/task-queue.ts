@@ -20,11 +20,25 @@ export function buildPersonalTaskQueue(
     .filter((task) => task.owner.trim().toLowerCase() === personName.trim().toLowerCase())
     .filter((task) => !inactiveStatuses.has(task.status) && signals[task.id] !== "done")
     .filter((task) => task.blockedBy.every((dependencyId) => isComplete(taskMap.get(dependencyId))))
-    .sort((a, b) => compareQueueTasks(a, b, signals));
+    .sort((a, b) => compareQueueTasks(a, b, signals, personName));
 }
 
-function compareQueueTasks(a: Task, b: Task, signals: Record<string, LocalTaskSignal>) {
-  const pausedDifference = pausedRank(a, signals) - pausedRank(b, signals);
+export function isTaskPausedForPerson(
+  task: Task,
+  signals: Record<string, LocalTaskSignal>,
+  personName: string
+): boolean {
+  const handedOffForReview = task.status === "REVIEW"
+    && Boolean(task.handoffTo.trim())
+    && !task.handoffTo.toLocaleLowerCase("ru").includes(personName.trim().toLocaleLowerCase("ru"));
+  return task.status === "WAITING_EXTERNAL"
+    || handedOffForReview
+    || signals[task.id] === "waiting"
+    || signals[task.id] === "stuck";
+}
+
+function compareQueueTasks(a: Task, b: Task, signals: Record<string, LocalTaskSignal>, personName: string) {
+  const pausedDifference = pausedRank(a, signals, personName) - pausedRank(b, signals, personName);
   if (pausedDifference) return pausedDifference;
 
   const deadlineDifference = deadlineRank(a.deadline) - deadlineRank(b.deadline);
@@ -43,8 +57,8 @@ function compareQueueTasks(a: Task, b: Task, signals: Record<string, LocalTaskSi
   return a.id.localeCompare(b.id);
 }
 
-function pausedRank(task: Task, signals: Record<string, LocalTaskSignal>) {
-  return task.status === "WAITING_EXTERNAL" || signals[task.id] === "waiting" || signals[task.id] === "stuck" ? 1 : 0;
+function pausedRank(task: Task, signals: Record<string, LocalTaskSignal>, personName: string) {
+  return isTaskPausedForPerson(task, signals, personName) ? 1 : 0;
 }
 
 function deadlineRank(value: string) {

@@ -10,6 +10,7 @@ import type {
   Milestone,
   NowMove,
   Person,
+  ProjectNotification,
   ProgressGate,
   RawSheetBundle,
   SourceStatus,
@@ -179,6 +180,30 @@ export function normalizeDashboard(
     updatedAt: row.UPDATED_AT
   }));
 
+  const notifications = asRows(raw.notifications).map<ProjectNotification>((row) => ({
+    id: row.NOTIFICATION_ID,
+    recipientId: row.RECIPIENT_ID,
+    createdById: row.CREATED_BY_ID,
+    kind: row.KIND,
+    title: row.TITLE,
+    message: row.MESSAGE,
+    taskId: row.TASK_ID,
+    actionId: row.ACTION_ID,
+    gateId: row.GATE_ID,
+    priority: row.PRIORITY,
+    status: row.STATUS,
+    push: isYes(row.PUSH),
+    createdAt: row.CREATED_AT,
+    dueAt: row.DUE_AT,
+    readAt: row.READ_AT,
+    ackAt: row.ACK_AT,
+    resolvedAt: row.RESOLVED_AT,
+    autoResolveRef: row.AUTO_RESOLVE_REF,
+    sourceRef: row.SOURCE_REF,
+    lastUpdated: row.LAST_UPDATED,
+    version: row.VERSION
+  }));
+
   const now = asRows(raw.now).map<NowMove>((row) => ({
     id: row.TASK_ID,
     owner: row.OWNER,
@@ -290,6 +315,7 @@ export function normalizeDashboard(
     changeEvents,
     people,
     issues,
+    notifications,
     reviews: [],
     audits: [],
     creatorPipeline: [],

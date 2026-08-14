@@ -49,7 +49,7 @@ import { formatDate } from "@/lib/date";
 import { buildDependencySummary } from "@/lib/domain/dependency-engine";
 import { calculateProgress } from "@/lib/domain/progress-engine";
 import { buildTaskRelationshipFocus, tasksInPersonalRelationshipView } from "@/lib/domain/task-relationship";
-import { buildPersonalTaskQueue, type LocalTaskSignal } from "@/lib/domain/task-queue";
+import { buildPersonalTaskQueue, isTaskPausedForPerson, type LocalTaskSignal } from "@/lib/domain/task-queue";
 import { personAsset, samePerson } from "@/lib/person-assets";
 import { rewardTierForPercent } from "@/lib/reward-tier";
 import {
@@ -203,7 +203,7 @@ export function DashboardClient({
   ).progress;
   const directUnlocks = focusedDependencies.unlocks;
   const fallbackTask = ownedTasks.find(
-    (task) => task.id !== currentTask?.id && !task.blockedBy.length && task.status !== "WAITING_EXTERNAL"
+    (task) => task.id !== currentTask?.id && !task.blockedBy.length && ["IN_PROGRESS", "READY"].includes(task.status)
   );
   const waitingTask = state.waiting?.task || ownedTasks.find((task) => task.status === "WAITING_EXTERNAL");
   const projectProgress = state.progress.readyPercent;
@@ -587,8 +587,7 @@ function PersonalWorkspace({
 
         <div className="task-position" aria-label="Положение задачи в очереди">
           {taskQueue.map((task, index) => {
-            const signal = localTaskSignals[task.id];
-            const paused = task.status === "WAITING_EXTERNAL" || signal === "waiting" || signal === "stuck";
+            const paused = isTaskPausedForPerson(task, localTaskSignals, person.name);
             return (
               <button
                 key={task.id}

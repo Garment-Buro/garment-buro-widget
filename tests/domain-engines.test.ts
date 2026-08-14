@@ -13,6 +13,8 @@ import {
 import { calculateProgress } from "../lib/domain/progress-engine.ts";
 import { restoreLastGoodSnapshot } from "../lib/domain/snapshot-engine.ts";
 import { buildTaskRelationshipFocus, tasksInPersonalRelationshipView } from "../lib/domain/task-relationship.ts";
+import { buildPersonalTaskQueue } from "../lib/domain/task-queue.ts";
+import { activePushNotifications } from "../lib/domain/notification-engine.ts";
 import { personAsset } from "../lib/person-assets.ts";
 import type {
   ChangeEvent,
@@ -20,6 +22,7 @@ import type {
   Goal,
   Milestone,
   Person,
+  ProjectNotification,
   ProgressGate,
   Task
 } from "../lib/types.ts";
@@ -219,13 +222,31 @@ test("18. dashboard person selection is case-insensitive and never falls back to
   assert.equal(unknown.person, null);
 });
 
-test("19. person assets resolve regardless of spreadsheet letter case", () => {
+test("19. personal current task can come from another goal than the MVP progress goal", () => {
+  const review = task({ id: "TASK-027", owner: "Никита", goalId: "GOAL-002", status: "REVIEW", handoffTo: "Костя" });
+  const widget = task({ id: "TASK-031", owner: "Никита", goalId: "GOAL-001", status: "READY" });
+  const domain = buildDashboardDomain({
+    goals: [goal002], milestones: [milestone], tasks: [review, widget], gates: [], events: [],
+    people: [nikita], sources: [source("execution"), source("control")], goalId: goal002.id,
+    personName: "Никита", updatedAt: new Date().toISOString()
+  });
+  assert.equal(domain.currentTask?.id, "TASK-031");
+  assert.equal(domain.goal?.id, "GOAL-002");
+});
+
+test("20. a review handed to another person does not outrank active personal work", () => {
+  const review = task({ id: "TASK-027", owner: "Никита", status: "REVIEW", deadline: "11.08.2026", handoffTo: "Костя" });
+  const widget = task({ id: "TASK-031", owner: "Никита", status: "READY", deadline: "" });
+  assert.equal(buildPersonalTaskQueue([review, widget], "Никита", {})[0]?.id, "TASK-031");
+});
+
+test("21. person assets resolve regardless of spreadsheet letter case", () => {
   assert.equal(personAsset(" НИКИТА ", "full"), "/assets/people/nikita-full.png");
   assert.equal(personAsset("вера", "avatar"), "/assets/people/vera-avatar.png");
   assert.equal(personAsset("Костя", "full"), undefined);
 });
 
-test("20. personal tree focus includes own tasks and their direct dependencies", () => {
+test("22. personal tree focus includes own tasks and their direct dependencies", () => {
   const dependency = task({ id: "TASK-026", owner: "Костя" });
   const own = task({ id: "TASK-031", owner: "НИКИТА", dependsOn: ["TASK-026"] });
   const downstream = task({ id: "TASK-032", owner: "Вера", dependsOn: ["TASK-031"] });
@@ -239,6 +260,18 @@ test("20. personal tree focus includes own tasks and their direct dependencies",
   assert.ok(visible.has("TASK-031"));
   assert.ok(visible.has("TASK-032"));
   assert.ok(!visible.has("TASK-777"));
+});
+
+test("23. push notifications are delivered only to their factual recipient", () => {
+  const notification = {
+    id: "NTF-1", recipientId: "P-KOSTYA", createdById: "P-NIKITA", kind: "DEPENDENCY",
+    title: "Action required", message: "Message", taskId: "TASK-027", actionId: "", gateId: "",
+    priority: "P0", status: "OPEN", push: true, createdAt: "", dueAt: "", readAt: "", ackAt: "",
+    resolvedAt: "", autoResolveRef: "", sourceRef: "", lastUpdated: "", version: "1"
+  } satisfies ProjectNotification;
+  assert.deepEqual(activePushNotifications([notification], "P-NIKITA"), []);
+  assert.deepEqual(activePushNotifications([notification], "p-kostya").map((item) => item.id), ["NTF-1"]);
+  assert.deepEqual(activePushNotifications([{ ...notification, status: "RESOLVED" }], "P-KOSTYA"), []);
 });
 
 function progress(goalValue: Goal, gates: ProgressGate[], currentTask: Task | null = null, events: ChangeEvent[] = []) {

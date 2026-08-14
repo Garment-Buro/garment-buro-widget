@@ -2,15 +2,20 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { enable as enableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { load } from "@tauri-apps/plugin-store";
 import { AlertTriangle, LoaderCircle } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { DashboardClient } from "@/components/dashboard-client";
 import { WidgetClient } from "@/components/widget-client";
+import { activePushNotifications } from "@/lib/domain/notification-engine";
 import type { DashboardState } from "@/lib/types";
 import { loadDesktopDashboard } from "./data";
 
 const settingsFile = "garment-buro-settings.json";
+const deliveredNotificationsKey = "deliveredNotificationIds";
+const deliveredInProcess = new Set<string>();
+let notificationDelivery: Promise<void> = Promise.resolve();
 
 type DesktopSettings = {
   accessToken: string;
@@ -28,7 +33,10 @@ export function DesktopApp() {
 
   const loadState = useCallback(async () => {
     if (!settings) throw new Error("Сначала введите код доступа.");
-    return loadDesktopDashboard(settings.accessToken, settings.personName);
+    const dashboard = await loadDesktopDashboard(settings.accessToken, settings.personName);
+    setState(dashboard);
+    await deliverProjectNotifications(dashboard);
+    return dashboard;
   }, [settings]);
 
   useEffect(() => {
@@ -43,6 +51,7 @@ export function DesktopApp() {
 
         const savedSettings = { accessToken, personName };
         const dashboard = await loadDesktopDashboard(accessToken, personName);
+        await deliverProjectNotifications(dashboard);
         await ensureAutostart();
         if (!cancelled) {
           setSettings(savedSettings);
@@ -60,9 +69,12 @@ export function DesktopApp() {
   }, []);
 
   useEffect(() => {
-    const unlisten = listen<string>("desktop-view", (event) => setIsDashboard(event.payload === "dashboard"));
+    const unlisten = listen<string>("desktop-view", (event) => {
+      setIsDashboard(event.payload === "dashboard");
+      if (settings) void loadState().catch(() => undefined);
+    });
     return () => { void unlisten.then((stop) => stop()); };
-  }, []);
+  }, [loadState, settings]);
 
   useEffect(() => {
     void invoke<boolean>("get_always_on_top")
@@ -93,6 +105,7 @@ export function DesktopApp() {
       await store.set("personName", personName);
       await store.save();
       await ensureAutostart();
+      await deliverProjectNotifications(dashboard);
       setSettings({ accessToken, personName });
       setState(dashboard);
     } catch (activationError) {
@@ -205,4 +218,37 @@ async function ensureAutostart() {
   } catch {
     // Autostart may be unavailable in an unpackaged development build.
   }
+}
+
+function deliverProjectNotifications(state: DashboardState): Promise<void> {
+  const run = notificationDelivery.then(async () => {
+    const recipientId = state.person?.id.trim().toLocaleLowerCase("ru");
+    if (!recipientId) return;
+
+    const pending = activePushNotifications(state.notifications || [], recipientId)
+      .filter((notification) => !deliveredInProcess.has(notification.id));
+    if (!pending.length) return;
+
+    const store = await load(settingsFile, { autoSave: true });
+    const delivered = new Set((await store.get<string[]>(deliveredNotificationsKey)) || []);
+    const fresh = pending.filter((notification) => !delivered.has(notification.id));
+    if (!fresh.length) return;
+
+    let permissionGranted = await isPermissionGranted();
+    if (!permissionGranted) permissionGranted = (await requestPermission()) === "granted";
+    if (!permissionGranted) return;
+
+    for (const notification of fresh) {
+      sendNotification({
+        title: notification.title || "GARMENT BURO",
+        body: notification.message || notification.taskId || "Новое уведомление"
+      });
+      delivered.add(notification.id);
+      deliveredInProcess.add(notification.id);
+    }
+    await store.set(deliveredNotificationsKey, [...delivered].slice(-250));
+    await store.save();
+  });
+  notificationDelivery = run.catch(() => undefined);
+  return run;
 }

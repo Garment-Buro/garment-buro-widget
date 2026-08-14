@@ -1,9 +1,10 @@
 "use client";
 
-import { AlertTriangle, Clock3, Maximize2, Pin, PinOff, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Bell, Clock3, Maximize2, Pin, PinOff, RefreshCw, X } from "lucide-react";
 import Image from "next/image";
 import { type MouseEvent, useCallback, useEffect, useState } from "react";
 import { formatDate } from "@/lib/date";
+import { activePushNotifications } from "@/lib/domain/notification-engine";
 import { personAsset } from "@/lib/person-assets";
 import { rewardTierForPercent } from "@/lib/reward-tier";
 import type { DashboardState } from "@/lib/types";
@@ -77,6 +78,7 @@ export function WidgetClient({
     : state.dataHealth.usingSnapshot
       ? `Кеш · ${state.dataHealth.staleMinutes ?? 0} мин`
       : "Данные актуальны";
+  const notificationCount = activePushNotifications(state.notifications || [], person.id).length;
 
   function openDashboard() {
     if (onOpenDashboard) {
@@ -95,12 +97,21 @@ export function WidgetClient({
     <main className="widget-page">
       <section className={`widget-shell widget-tier-${rewardTier}`} aria-label="Виджет задач GARMENT BURO" onMouseDown={startDrag}>
         <header className="widget-header">
+          <span className="widget-animated-mark" aria-hidden="true">
+            <Image className="widget-mark-fallback" src="/assets/tray-mark.png" alt="" fill sizes="26px" />
+            <video src="/assets/logo_anim.mp4" autoPlay loop muted playsInline preload="auto" />
+          </span>
           <small
             className={state.dataHealth.usingSnapshot ? "widget-freshness is-stale" : "widget-freshness"}
           >
             <i aria-hidden="true" />{freshness}
           </small>
           <div className="widget-window-controls">
+            {notificationCount ? (
+              <span className="widget-notification-indicator" title={`Новых уведомлений: ${notificationCount}`}>
+                <Bell size={15} /><b>{notificationCount}</b>
+              </span>
+            ) : null}
             <button type="button" onClick={() => { void refresh(); }} disabled={isRefreshing} title="Обновить данные" aria-label="Обновить данные">
               <RefreshCw className={isRefreshing ? "spin" : undefined} size={16} />
             </button>

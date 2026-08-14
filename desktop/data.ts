@@ -10,6 +10,7 @@ interface AppsScriptPayload {
   generatedAt?: string;
   data?: Partial<SheetData>;
   sourceErrors?: Partial<Record<SourceName, string | null>>;
+  notificationsError?: string;
 }
 
 const sheetKeys: Array<keyof SheetData> = [
@@ -21,6 +22,7 @@ const sheetKeys: Array<keyof SheetData> = [
   "changeEvents",
   "people",
   "issues",
+  "notifications",
   "now"
 ];
 
@@ -31,7 +33,10 @@ export async function loadDesktopDashboard(token: string, personName: string): P
     throw new Error(readableConnectionError(payload.error));
   }
 
-  const sourceErrors = payload.sourceErrors || {};
+  const sourceErrors = { ...(payload.sourceErrors || {}) };
+  if (payload.notificationsError && !sourceErrors.execution) {
+    sourceErrors.execution = `NOTIFICATIONS: ${payload.notificationsError}`;
+  }
   const sheets = Object.fromEntries(
     sheetKeys.map((key) => [key, Array.isArray(payload.data?.[key]) ? payload.data?.[key] : []])
   ) as SheetData;

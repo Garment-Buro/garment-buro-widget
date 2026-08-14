@@ -1,6 +1,7 @@
 import "server-only";
 
-import { appsScriptConfig } from "@/lib/config";
+import { appsScriptConfig, spreadsheetConfig } from "@/lib/config";
+import { parseCsv } from "@/lib/ai/csv";
 import { makeSourceStatus } from "@/lib/data/normalize";
 import type { RawSheetBundle, SourceName } from "@/lib/types";
 
@@ -23,6 +24,7 @@ const sheetKeys: Array<keyof SheetData> = [
   "changeEvents",
   "people",
   "issues",
+  "notifications",
   "now"
 ];
 
@@ -47,8 +49,12 @@ export class AppsScriptDataSource {
       if (!payload.ok || !payload.data) throw new Error(payload.error || "Apps Script returned no data");
 
       const sourceErrors = payload.sourceErrors || {};
+      const data = normalizeSheetData(payload.data);
+      if (data.notifications.length < 2) {
+        data.notifications = await fetchPublicNotifications();
+      }
       return {
-        ...normalizeSheetData(payload.data),
+        ...data,
         sources: (["execution", "control"] as SourceName[]).map((source) =>
           makeSourceStatus(source, !sourceErrors[source], sourceErrors[source] || undefined)
         )
@@ -63,6 +69,15 @@ export class AppsScriptDataSource {
       };
     }
   }
+}
+
+async function fetchPublicNotifications(): Promise<string[][]> {
+  const response = await fetch(
+    `https://docs.google.com/spreadsheets/d/${spreadsheetConfig.executionId}/export?format=csv&gid=1015`,
+    { cache: "no-store", signal: AbortSignal.timeout(15_000) }
+  );
+  if (!response.ok) throw new Error(`NOTIFICATIONS: ${response.status} ${response.statusText}`);
+  return parseCsv(await response.text()).filter((row, index) => index === 0 || Boolean(row[0]?.trim()));
 }
 
 function normalizeSheetData(data: Partial<SheetData>): SheetData {

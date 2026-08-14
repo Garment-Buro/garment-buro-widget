@@ -23,6 +23,7 @@ const ranges: Record<SheetKey, RangeConfig> = {
   progressGates: execution("PROGRESS_GATES", "A1:O500"),
   changeEvents: execution("CHANGE_EVENTS", "A1:Q1000"),
   people: execution("PEOPLE", "A1:H100"),
+  notifications: execution("NOTIFICATIONS", "A1:U1000"),
   now: { ...execution("NOW", "A1:K200"), optional: true },
   issues: {
     spreadsheetId: spreadsheetConfig.controlId,

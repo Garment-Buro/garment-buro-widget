@@ -167,6 +167,30 @@ export interface Issue {
   updatedAt: string;
 }
 
+export interface ProjectNotification {
+  id: string;
+  recipientId: string;
+  createdById: string;
+  kind: string;
+  title: string;
+  message: string;
+  taskId: string;
+  actionId: string;
+  gateId: string;
+  priority: string;
+  status: string;
+  push: boolean;
+  createdAt: string;
+  dueAt: string;
+  readAt: string;
+  ackAt: string;
+  resolvedAt: string;
+  autoResolveRef: string;
+  sourceRef: string;
+  lastUpdated: string;
+  version: string;
+}
+
 export interface Review {
   id: string;
   title: string;
@@ -306,6 +330,7 @@ export interface DashboardState {
   changeEvents: ChangeEvent[];
   people: Person[];
   issues: Issue[];
+  notifications: ProjectNotification[];
   reviews: Review[];
   audits: Audit[];
   creatorPipeline: CreatorCandidate[];
@@ -348,6 +373,7 @@ export interface RawSheetBundle {
   changeEvents: string[][];
   people: string[][];
   issues: string[][];
+  notifications: string[][];
   now: string[][];
   sources: SourceStatus[];
 }
