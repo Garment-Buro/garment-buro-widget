@@ -313,54 +313,9 @@ html.desktop-widget-mode .widget-task-meta svg {
   height: 12px;
 }
 
-html.desktop-widget-mode .widget-task-reward {
-  position: absolute;
-  right: 12px;
-  bottom: 5px;
-  display: block;
-  color: var(--widget-tier-color);
-  font-family: Impact, "Arial Narrow", Arial, sans-serif;
-  font-size: 29px;
-  line-height: 1;
-  pointer-events: none;
-  text-shadow: var(--widget-tier-text-shadow);
-  animation: widget-reward-pulse 1.7s ease-in-out infinite;
-}
-
-@keyframes widget-reward-pulse {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  html.desktop-widget-mode .widget-task-reward {
-    opacity: 1;
-    animation: none;
-  }
-}
-
 .desktop-dashboard-view {
   position: relative;
   min-height: 100vh;
-}
-
-.desktop-collapse-button {
-  position: fixed;
-  top: 14px;
-  right: 14px;
-  z-index: 250;
-  display: grid;
-  width: 38px;
-  height: 38px;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 5px 16px rgba(24, 23, 21, 0.08);
-}
-
-.desktop-collapse-button:hover {
-  color: var(--orange);
 }
 
 .desktop-status,

@@ -12,6 +12,8 @@ import {
 } from "../lib/domain/dependency-engine.ts";
 import { calculateProgress } from "../lib/domain/progress-engine.ts";
 import { restoreLastGoodSnapshot } from "../lib/domain/snapshot-engine.ts";
+import { buildTaskRelationshipFocus, tasksInPersonalRelationshipView } from "../lib/domain/task-relationship.ts";
+import { personAsset } from "../lib/person-assets.ts";
 import type {
   ChangeEvent,
   DashboardState,
@@ -199,6 +201,44 @@ test("17. browser code never reads OPENAI_API_KEY", async () => {
   const dashboardCode = await readFile(new URL("../components/dashboard-client.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(clientCode, /OPENAI_API_KEY/);
   assert.doesNotMatch(dashboardCode, /OPENAI_API_KEY/);
+});
+
+test("18. dashboard person selection is case-insensitive and never falls back to another employee", () => {
+  const upperNikita = person({ id: "P-NIKITA", name: "НИКИТА" });
+  const known = buildDashboardDomain({
+    goals: [goal002], milestones: [milestone], tasks: [task({ owner: "НИКИТА" })], gates: [], events: [],
+    people: [vera, upperNikita], sources: [source("execution"), source("control")], goalId: goal002.id,
+    personName: "Никита", updatedAt: new Date().toISOString()
+  });
+  const unknown = buildDashboardDomain({
+    goals: [goal002], milestones: [milestone], tasks: [task008], gates: [], events: [],
+    people: [vera, upperNikita], sources: [source("execution"), source("control")], goalId: goal002.id,
+    personName: "Неизвестный", updatedAt: new Date().toISOString()
+  });
+  assert.equal(known.person?.id, "P-NIKITA");
+  assert.equal(unknown.person, null);
+});
+
+test("19. person assets resolve regardless of spreadsheet letter case", () => {
+  assert.equal(personAsset(" НИКИТА ", "full"), "/assets/people/nikita-full.png");
+  assert.equal(personAsset("вера", "avatar"), "/assets/people/vera-avatar.png");
+  assert.equal(personAsset("Костя", "full"), undefined);
+});
+
+test("20. personal tree focus includes own tasks and their direct dependencies", () => {
+  const dependency = task({ id: "TASK-026", owner: "Костя" });
+  const own = task({ id: "TASK-031", owner: "НИКИТА", dependsOn: ["TASK-026"] });
+  const downstream = task({ id: "TASK-032", owner: "Вера", dependsOn: ["TASK-031"] });
+  const unrelated = task({ id: "TASK-777", owner: "Вера" });
+  const tasks = hydrateTaskDependencies([dependency, own, downstream, unrelated], []);
+  const focus = buildTaskRelationshipFocus(tasks[1], tasks, "Никита");
+  const visible = tasksInPersonalRelationshipView(tasks, "Никита");
+  assert.deepEqual(focus.incoming.map((item) => item.id), ["TASK-026"]);
+  assert.deepEqual(focus.outgoing.map((item) => item.id), ["TASK-032"]);
+  assert.ok(visible.has("TASK-026"));
+  assert.ok(visible.has("TASK-031"));
+  assert.ok(visible.has("TASK-032"));
+  assert.ok(!visible.has("TASK-777"));
 });
 
 function progress(goalValue: Goal, gates: ProgressGate[], currentTask: Task | null = null, events: ChangeEvent[] = []) {

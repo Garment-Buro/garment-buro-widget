@@ -1,5 +1,6 @@
 import { buildDependencySummary, buildProjectGraph, selectCurrentTask } from "./dependency-engine.ts";
 import { calculateProgress } from "./progress-engine.ts";
+import { normalizePersonName } from "../person-assets.ts";
 import type {
   ChangeEvent,
   DashboardDataHealth,
@@ -37,7 +38,11 @@ export function buildDashboardDomain({
   updatedAt: string;
   usingSnapshot?: boolean;
 }) {
-  const person = people.find((item) => item.name === personName) || people.find((item) => item.active) || null;
+  const requestedPerson = normalizePersonName(personName);
+  const person = people.find((item) => (
+    normalizePersonName(item.name) === requestedPerson
+    || normalizePersonName(item.id) === requestedPerson
+  )) || null;
   const selectedGoal = goals.find((item) => item.id === goalId) || null;
   const goalTasks = selectedGoal ? tasks.filter((task) => task.goalId === selectedGoal.id) : tasks;
   const goalGates = selectedGoal ? gates.filter((gate) => gate.goalId === selectedGoal.id) : gates;

@@ -22,9 +22,10 @@ import {
   Link2,
   ListChecks,
   LockKeyhole,
-  LogOut,
   Maximize2,
   Minus,
+  Pin,
+  PinOff,
   Play,
   RefreshCw,
   Search,
@@ -47,7 +48,9 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties, type Rea
 import { formatDate } from "@/lib/date";
 import { buildDependencySummary } from "@/lib/domain/dependency-engine";
 import { calculateProgress } from "@/lib/domain/progress-engine";
+import { buildTaskRelationshipFocus, tasksInPersonalRelationshipView } from "@/lib/domain/task-relationship";
 import { buildPersonalTaskQueue, type LocalTaskSignal } from "@/lib/domain/task-queue";
+import { personAsset, samePerson } from "@/lib/person-assets";
 import { rewardTierForPercent } from "@/lib/reward-tier";
 import {
   requestTaskActionHelp,
@@ -62,18 +65,8 @@ export type { TaskActionSubmission } from "@/lib/services/task-action-service";
 
 const refreshMs = 60_000;
 const completedStatuses = new Set(["DONE", "CANCELLED"]);
-const personAssets: Partial<Record<string, { full: string; avatar: string }>> = {
-  "Вера": {
-    full: "/assets/people/vera-full.png",
-    avatar: "/assets/people/vera-avatar.png"
-  },
-  "Никита": {
-    full: "/assets/people/nikita-full.png",
-    avatar: "/assets/people/nikita-avatar.png"
-  }
-};
-
 type WorkspaceView = "personal" | "tree";
+type TreeViewMode = "all" | "personal";
 type IconComponent = LucideIcon;
 type TaskActionConfirmation = "idle" | "saving" | "success";
 type BlockerOutcome = "helped" | "blocked";
@@ -142,12 +135,16 @@ export function DashboardClient({
   initialState,
   loadState,
   onExit,
-  onConfirmTaskAction
+  onConfirmTaskAction,
+  isAlwaysOnTop,
+  onToggleAlwaysOnTop
 }: {
   initialState: DashboardState;
   loadState?: () => Promise<DashboardState>;
   onExit?: () => void;
   onConfirmTaskAction?: (submission: TaskActionSubmission) => Promise<void>;
+  isAlwaysOnTop?: boolean;
+  onToggleAlwaysOnTop?: () => void;
 }) {
   const [state, setState] = useState(initialState);
   const [view, setView] = useState<WorkspaceView>("personal");
@@ -159,6 +156,7 @@ export function DashboardClient({
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [showFilters, setShowFilters] = useState(false);
   const [treeScale, setTreeScale] = useState(1);
+  const [treeViewMode, setTreeViewMode] = useState<TreeViewMode>("all");
 
   const refresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -278,6 +276,8 @@ export function DashboardClient({
           onFocusTask={setFocusedTaskId}
           onExit={onExit || (() => window.location.assign("/widget"))}
           onConfirmTaskAction={confirmTaskAction}
+          isAlwaysOnTop={isAlwaysOnTop}
+          onToggleAlwaysOnTop={onToggleAlwaysOnTop}
         />
       ) : (
         <TaskTree
@@ -289,12 +289,17 @@ export function DashboardClient({
           statusFilter={statusFilter}
           showFilters={showFilters}
           scale={treeScale}
+          viewMode={treeViewMode}
           onSearch={setTreeSearch}
           onFilter={setStatusFilter}
           onToggleFilters={() => setShowFilters((value) => !value)}
           onScale={setTreeScale}
+          onViewMode={setTreeViewMode}
           onBack={() => setView("personal")}
+          onCollapse={onExit || (() => window.location.assign("/widget"))}
           onOpenTask={setSelectedTask}
+          isAlwaysOnTop={isAlwaysOnTop}
+          onToggleAlwaysOnTop={onToggleAlwaysOnTop}
         />
       )}
       {selectedTask ? (
@@ -324,7 +329,9 @@ function PersonalWorkspace({
   onOpenTask,
   onFocusTask,
   onExit,
-  onConfirmTaskAction
+  onConfirmTaskAction,
+  isAlwaysOnTop,
+  onToggleAlwaysOnTop
 }: {
   state: DashboardState;
   person: Person;
@@ -347,6 +354,8 @@ function PersonalWorkspace({
   onFocusTask: (taskId: string) => void;
   onExit: () => void;
   onConfirmTaskAction?: (submission: TaskActionSubmission) => Promise<void>;
+  isAlwaysOnTop?: boolean;
+  onToggleAlwaysOnTop?: () => void;
 }) {
   const [taskAction, setTaskAction] = useState<TaskActionIntent | null>(null);
   const [taskActionDraft, setTaskActionDraft] = useState<TaskActionDraft>(emptyTaskActionDraft);
@@ -470,7 +479,7 @@ function PersonalWorkspace({
           <MetaRow icon={Focus} label="Project Focus" note={currentTask.direction || currentTask.title} />
           <MetaRow icon={Layers3} label={`Спринт ${sprint} / 3`} note={`${formatPercent(projectProgress)}% · +${formatPercent(taskImpact)}%`} accent />
         </div>
-        <button className="identity-exit" type="button" onClick={onExit}><LogOut size={19} /><span>Выйти</span></button>
+        <button className="identity-exit" type="button" onClick={onExit}><Minus size={19} /><span>Свернуть виджет</span></button>
       </aside>
 
       <section className="workspace-main">
@@ -481,6 +490,17 @@ function PersonalWorkspace({
           </div>
           <div className="live-controls">
             <span className={`live-state ${sourceTone !== "LIVE" ? "is-warning" : ""}`}><i /> {sourceTone}</span>
+            {onToggleAlwaysOnTop ? (
+              <button
+                className={`icon-button ${isAlwaysOnTop ? "is-active" : ""}`.trim()}
+                onClick={onToggleAlwaysOnTop}
+                aria-label={isAlwaysOnTop ? "Открепить окно" : "Закрепить поверх всех окон"}
+                title={isAlwaysOnTop ? "Открепить окно" : "Закрепить поверх всех окон"}
+                aria-pressed={isAlwaysOnTop}
+              >
+                {isAlwaysOnTop ? <PinOff size={17} /> : <Pin size={17} />}
+              </button>
+            ) : null}
             <button className="icon-button" onClick={onRefresh} disabled={isRefreshing} aria-label="Обновить данные" title="Обновить данные">
               <RefreshCw size={17} className={isRefreshing ? "spin" : ""} />
             </button>
@@ -644,12 +664,17 @@ function TaskTree({
   statusFilter,
   showFilters,
   scale,
+  viewMode,
   onSearch,
   onFilter,
   onToggleFilters,
   onScale,
+  onViewMode,
   onBack,
-  onOpenTask
+  onCollapse,
+  onOpenTask,
+  isAlwaysOnTop,
+  onToggleAlwaysOnTop
 }: {
   state: DashboardState;
   person: Person;
@@ -659,21 +684,36 @@ function TaskTree({
   statusFilter: string;
   showFilters: boolean;
   scale: number;
+  viewMode: TreeViewMode;
   onSearch: (value: string) => void;
   onFilter: (value: string) => void;
   onToggleFilters: () => void;
   onScale: (value: number) => void;
+  onViewMode: (value: TreeViewMode) => void;
   onBack: () => void;
+  onCollapse: () => void;
   onOpenTask: (task: Task) => void;
+  isAlwaysOnTop?: boolean;
+  onToggleAlwaysOnTop?: () => void;
 }) {
+  const [hoveredOwnTaskId, setHoveredOwnTaskId] = useState("");
   const goal = state.goal;
   const lanes = useMemo(() => buildLanes(state.tasks), [state.tasks]);
+  const personalViewIds = useMemo(
+    () => tasksInPersonalRelationshipView(state.tasks, person.name),
+    [person.name, state.tasks]
+  );
+  const hoveredTask = state.tasks.find((task) => task.id === hoveredOwnTaskId);
+  const relationship = hoveredTask
+    ? buildTaskRelationshipFocus(hoveredTask, state.tasks, person.name)
+    : null;
   const normalizedSearch = search.trim().toLowerCase();
   const visibleLanes = lanes.map((lane) => ({
     ...lane,
     tasks: lane.tasks.filter((task) => {
       const effective = effectiveStatus(task, state.tasks);
       if (statusFilter !== "ALL" && effective !== statusFilter) return false;
+      if (viewMode === "personal" && !personalViewIds.has(task.id)) return false;
       return !normalizedSearch || `${task.id} ${task.title} ${task.owner}`.toLowerCase().includes(normalizedSearch);
     })
   }));
@@ -701,7 +741,7 @@ function TaskTree({
           <NavItem icon={BarChart3} label="Аналитика" />
           <NavItem icon={Settings} label="Настройки" />
         </nav>
-        <button className="collapse-button" onClick={onBack}><ChevronLeft size={16} /> Свернуть</button>
+        <button className="collapse-button" onClick={onCollapse}><Minus size={16} /> Свернуть виджет</button>
       </aside>
 
       <section className="tree-workspace">
@@ -712,7 +752,24 @@ function TaskTree({
             <p>Полная карта задач и зависимостей проекта Commercial MVP</p>
           </div>
           <div className="tree-toolbar">
-            <button className="toolbar-button" aria-label="Вид дерева"><span>Вид</span><Grid2X2 size={16} /></button>
+            {onToggleAlwaysOnTop ? (
+              <button
+                className={`toolbar-button ${isAlwaysOnTop ? "is-active" : ""}`.trim()}
+                onClick={onToggleAlwaysOnTop}
+                aria-label={isAlwaysOnTop ? "Открепить окно" : "Закрепить поверх всех окон"}
+                title={isAlwaysOnTop ? "Открепить окно" : "Закрепить поверх всех окон"}
+                aria-pressed={isAlwaysOnTop}
+              >
+                {isAlwaysOnTop ? <PinOff size={16} /> : <Pin size={16} />}
+              </button>
+            ) : null}
+            <button
+              className={`toolbar-button ${viewMode === "personal" ? "is-active" : ""}`.trim()}
+              onClick={() => onViewMode(viewMode === "all" ? "personal" : "all")}
+              aria-label={viewMode === "all" ? "Показать мои задачи и связи" : "Показать все задачи"}
+            >
+              <span>{viewMode === "all" ? "Мои связи" : "Все задачи"}</span><Grid2X2 size={16} />
+            </button>
             <button className={`toolbar-button ${showFilters ? "is-active" : ""}`} onClick={onToggleFilters} aria-expanded={showFilters}>
               <Filter size={16} /><span>Фильтры</span>
             </button>
@@ -734,6 +791,17 @@ function TaskTree({
         ) : null}
 
         <section className="tree-viewport" aria-label="Карта задач">
+          <div className={`tree-relationship-guide ${relationship ? "is-active" : ""}`} aria-live="polite">
+            {relationship && hoveredTask ? (
+              <>
+                <div><span>Своя задача</span><strong>{hoveredTask.id}</strong></div>
+                <div><span>Зависит от</span><strong>{relationship.incoming.length ? relationship.incoming.map(taskRelationLabel).join(" · ") : "нет входящих зависимостей"}</strong></div>
+                <div><span>От неё зависят</span><strong>{relationship.outgoing.length ? relationship.outgoing.map(taskRelationLabel).join(" · ") : "нет следующих задач"}</strong></div>
+              </>
+            ) : (
+              <p>Наведите на свою задачу: она станет серой, а связанные задачи останутся подсвечены.</p>
+            )}
+          </div>
           <div className="zoom-controls">
             <button onClick={() => toggleFullscreen()} aria-label="На весь экран" title="На весь экран"><Maximize2 size={17} /></button>
             <button onClick={() => onScale(Math.min(1.15, Number((scale + 0.1).toFixed(2))))} aria-label="Увеличить" title="Увеличить"><ZoomIn size={18} /></button>
@@ -768,7 +836,15 @@ function TaskTree({
                         {lane.tasks.map((task, index) => (
                           <div className="tree-node-wrap" key={task.id}>
                             {index ? <span className="vertical-edge" aria-hidden /> : null}
-                            <TaskNode task={task} allTasks={state.tasks} onOpen={() => onOpenTask(task)} />
+                            <TaskNode
+                              task={task}
+                              allTasks={state.tasks}
+                              personName={person.name}
+                              relationship={relationship}
+                              isHovered={task.id === hoveredOwnTaskId}
+                              onHover={(taskId) => setHoveredOwnTaskId(taskId)}
+                              onOpen={() => onOpenTask(task)}
+                            />
                           </div>
                         ))}
                         {!lane.tasks.length ? <div className="lane-empty">Нет задач по фильтру</div> : null}
@@ -809,7 +885,7 @@ function TaskTree({
 }
 
 function PersonArtwork({ person, variant }: { person: Person; variant: "full" | "avatar" }) {
-  const asset = personAssets[person.name]?.[variant];
+  const asset = personAsset(person.name, variant);
   return (
     <div className={`person-artwork person-artwork-${variant}`} aria-label={`Аватар: ${person.name}`}>
       {asset ? (
@@ -1089,6 +1165,10 @@ function taskWord(count: number) {
   return "задач";
 }
 
+function taskRelationLabel(task: Task) {
+  return `${task.id} — ${task.owner || "не назначен"}`;
+}
+
 function updatedTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value || "—";
@@ -1099,10 +1179,36 @@ function NavItem({ icon: Icon, label, active }: { icon: IconComponent; label: st
   return <button className={active ? "nav-item is-active" : "nav-item"}><Icon size={17} /><span>{label}</span></button>;
 }
 
-function TaskNode({ task, allTasks, onOpen }: { task: Task; allTasks: Task[]; onOpen: () => void }) {
+function TaskNode({
+  task,
+  allTasks,
+  personName,
+  relationship,
+  isHovered,
+  onHover,
+  onOpen
+}: {
+  task: Task;
+  allTasks: Task[];
+  personName: string;
+  relationship: ReturnType<typeof buildTaskRelationshipFocus> | null;
+  isHovered: boolean;
+  onHover: (taskId: string) => void;
+  onOpen: () => void;
+}) {
   const status = effectiveStatus(task, allTasks);
+  const isOwn = samePerson(task.owner, personName);
+  const isRelated = Boolean(relationship?.highlightedTaskIds.has(task.id));
+  const isDimmed = Boolean(relationship && !isRelated);
   return (
-    <button className={`task-node task-node-${status.toLowerCase()}`} onClick={onOpen}>
+    <button
+      className={`task-node task-node-${status.toLowerCase()} ${isOwn ? "is-own" : ""} ${isHovered ? "is-hovered" : ""} ${isRelated ? "is-related" : ""} ${isDimmed ? "is-dimmed" : ""}`.trim()}
+      onClick={onOpen}
+      onMouseEnter={() => { if (isOwn) onHover(task.id); }}
+      onMouseLeave={() => { if (isOwn) onHover(""); }}
+      onFocus={() => { if (isOwn) onHover(task.id); }}
+      onBlur={() => { if (isOwn) onHover(""); }}
+    >
       <span className="task-node-id">{task.id}</span>
       <strong>{task.title}</strong>
       <div><OwnerMark owner={task.owner} /><span>{task.owner || "Не назначен"}</span><StatusPill status={status} /></div>
@@ -1111,7 +1217,7 @@ function TaskNode({ task, allTasks, onOpen }: { task: Task; allTasks: Task[]; on
 }
 
 function OwnerMark({ owner }: { owner: string }) {
-  const asset = personAssets[owner]?.avatar;
+  const asset = personAsset(owner, "avatar");
   return (
     <span className={asset ? "owner-mark has-image" : "owner-mark"} aria-hidden>
       {asset ? <Image src={asset} alt="" fill sizes="20px" /> : owner ? owner.slice(0, 1) : "?"}

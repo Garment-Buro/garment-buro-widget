@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 300" role="img" aria-label="Силуэт сотрудника">
+  <rect width="240" height="300" rx="18" fill="#deddd8"/>
+  <circle cx="120" cy="92" r="48" fill="#8f8f8a"/>
+  <path d="M42 280c3-77 34-117 78-117s75 40 78 117" fill="#8f8f8a"/>
+</svg>

@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { enable as enableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 import { load } from "@tauri-apps/plugin-store";
-import { AlertTriangle, LoaderCircle, Minimize2 } from "lucide-react";
+import { AlertTriangle, LoaderCircle } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { DashboardClient } from "@/components/dashboard-client";
 import { WidgetClient } from "@/components/widget-client";
@@ -23,6 +23,7 @@ export function DesktopApp() {
   const [state, setState] = useState<DashboardState | null>(null);
   const [isBooting, setIsBooting] = useState(true);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
   const [error, setError] = useState("");
 
   const loadState = useCallback(async () => {
@@ -37,7 +38,7 @@ export function DesktopApp() {
       try {
         const store = await load(settingsFile, { autoSave: true });
         const accessToken = (await store.get<string>("accessToken"))?.trim() || "";
-        const personName = (await store.get<string>("personName"))?.trim() || "Вера";
+        const personName = (await store.get<string>("personName"))?.trim() || "";
         if (!accessToken) return;
 
         const savedSettings = { accessToken, personName };
@@ -60,6 +61,14 @@ export function DesktopApp() {
 
   useEffect(() => {
     const unlisten = listen<string>("desktop-view", (event) => setIsDashboard(event.payload === "dashboard"));
+    return () => { void unlisten.then((stop) => stop()); };
+  }, []);
+
+  useEffect(() => {
+    void invoke<boolean>("get_always_on_top")
+      .then(setIsAlwaysOnTop)
+      .catch(() => setIsAlwaysOnTop(false));
+    const unlisten = listen<boolean>("always-on-top-changed", (event) => setIsAlwaysOnTop(event.payload));
     return () => { void unlisten.then((stop) => stop()); };
   }, []);
 
@@ -101,6 +110,10 @@ export function DesktopApp() {
     void invoke("collapse_widget_window").then(() => setIsDashboard(false));
   }
 
+  function toggleAlwaysOnTop() {
+    void invoke<boolean>("toggle_always_on_top").then(setIsAlwaysOnTop);
+  }
+
   if (isBooting) return <LoadingScreen label="Подключаем рабочее пространство" />;
 
   if (!settings || !state) {
@@ -110,16 +123,13 @@ export function DesktopApp() {
   if (isDashboard) {
     return (
       <div className="desktop-dashboard-view">
-        <button
-          className="desktop-collapse-button"
-          type="button"
-          onClick={collapseDashboard}
-          title="Свернуть до виджета"
-          aria-label="Свернуть до виджета"
-        >
-          <Minimize2 size={18} />
-        </button>
-        <DashboardClient initialState={state} loadState={loadState} onExit={collapseDashboard} />
+        <DashboardClient
+          initialState={state}
+          loadState={loadState}
+          onExit={collapseDashboard}
+          isAlwaysOnTop={isAlwaysOnTop}
+          onToggleAlwaysOnTop={toggleAlwaysOnTop}
+        />
       </div>
     );
   }
@@ -130,6 +140,8 @@ export function DesktopApp() {
       onOpenDashboard={openDashboard}
       onHideWidget={() => { void invoke("hide_main_window"); }}
       onStartDrag={() => { void getCurrentWebviewWindow().startDragging(); }}
+      isAlwaysOnTop={isAlwaysOnTop}
+      onToggleAlwaysOnTop={toggleAlwaysOnTop}
     />
   );
 }
@@ -166,7 +178,7 @@ function ActivationScreen({
         <form onSubmit={onSubmit}>
           <label>
             <span>Имя сотрудника</span>
-            <input name="personName" defaultValue="Вера" autoComplete="name" disabled={isConnecting} />
+            <input name="personName" placeholder="Вера, Костя или Никита" autoComplete="name" disabled={isConnecting} />
           </label>
           <label>
             <span>Код доступа</span>

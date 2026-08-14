@@ -393,7 +393,18 @@ fn toggle_always_on_top(app: AppHandle) -> Result<bool, String> {
   window
     .set_always_on_top(next)
     .map_err(|error| error.to_string())?;
+  window
+    .emit("always-on-top-changed", next)
+    .map_err(|error| error.to_string())?;
   Ok(next)
+}
+
+#[tauri::command]
+fn get_always_on_top(app: AppHandle) -> Result<bool, String> {
+  let window = app
+    .get_webview_window("main")
+    .ok_or_else(|| "Окно виджета не найдено".to_string())?;
+  window.is_always_on_top().map_err(|error| error.to_string())
 }
 
 fn show_widget(app: &AppHandle) {
@@ -412,7 +423,8 @@ pub fn run() {
       open_dashboard_window,
       collapse_widget_window,
       hide_main_window,
-      toggle_always_on_top
+      toggle_always_on_top,
+      get_always_on_top
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

@@ -153,8 +153,8 @@ input:focus-visible {
 }
 
 .person-artwork-full .person-asset-image {
-  object-fit: cover;
-  object-position: center;
+  object-fit: contain;
+  object-position: center bottom;
 }
 
 .person-artwork-full {
@@ -287,6 +287,12 @@ input:focus-visible {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.68);
+}
+
+.icon-button.is-active {
+  border-color: var(--orange);
+  background: rgba(238, 123, 22, 0.1);
+  color: #b95700;
 }
 
 .spin {
@@ -996,6 +1002,8 @@ input:focus-visible {
 
 .toolbar-button.is-active {
   border-color: var(--orange);
+  background: rgba(238, 123, 22, 0.09);
+  color: #b95700;
 }
 
 .tree-search {
@@ -1047,6 +1055,61 @@ input:focus-visible {
   background: rgba(255, 255, 255, 0.34);
 }
 
+.tree-relationship-guide {
+  position: absolute;
+  top: 18px;
+  right: 76px;
+  left: 24px;
+  z-index: 5;
+  display: grid;
+  min-height: 58px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid rgba(23, 23, 23, 0.1);
+  border-radius: 8px;
+  background: rgba(246, 245, 242, 0.94);
+  box-shadow: 0 7px 18px rgba(27, 26, 23, 0.06);
+}
+
+.tree-relationship-guide > p {
+  grid-column: 1 / -1;
+  align-self: center;
+  margin: 0;
+  padding: 0 16px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.tree-relationship-guide > div {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  gap: 4px;
+  border-left: 1px solid var(--line);
+  padding: 9px 14px;
+}
+
+.tree-relationship-guide > div:first-child {
+  border-left: 0;
+  background: #deded9;
+}
+
+.tree-relationship-guide span {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.tree-relationship-guide strong {
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .zoom-controls {
   position: sticky;
   top: 18px;
@@ -1080,7 +1143,7 @@ input:focus-visible {
 .tree-stage-shell {
   min-width: 1050px;
   min-height: 760px;
-  padding: 12px 52px 180px 24px;
+  padding: 94px 52px 180px 24px;
 }
 
 .tree-stage {
@@ -1096,14 +1159,14 @@ input:focus-visible {
   position: relative;
   z-index: 2;
   display: grid;
-  width: 280px;
-  min-height: 92px;
+  width: min(520px, calc(100% - 120px));
+  min-height: 76px;
   grid-template-columns: 48px 1fr 38px;
   align-items: center;
   gap: 10px;
   margin: 0 auto;
   border-radius: 8px;
-  padding: 16px;
+  padding: 12px 16px 16px;
   background: #24272c;
   color: white;
   box-shadow: 0 12px 24px rgba(20, 22, 25, 0.22);
@@ -1127,6 +1190,7 @@ input:focus-visible {
 .goal-node p {
   margin: 5px 0 0;
   font-size: 13px;
+  line-height: 1.25;
 }
 
 .goal-node b {
@@ -1301,11 +1365,28 @@ input:focus-visible {
   background: rgba(255, 255, 255, 0.78);
   box-shadow: 0 5px 12px rgba(27, 26, 23, 0.035);
   text-align: left;
-  transition: transform 140ms ease, border-color 140ms ease;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, opacity 140ms ease, box-shadow 140ms ease;
 }
 
 .task-node:hover {
   transform: translateY(-1px);
+}
+
+.task-node.is-own:hover,
+.task-node.is-own.is-hovered {
+  border-color: #72736f;
+  background: #deded9;
+  box-shadow: 0 8px 20px rgba(30, 30, 27, 0.12);
+}
+
+.task-node.is-related:not(.is-hovered) {
+  border-color: rgba(74, 131, 186, 0.68);
+  box-shadow: 0 0 0 2px rgba(74, 131, 186, 0.1);
+}
+
+.task-node.is-dimmed {
+  opacity: 0.24;
+  filter: grayscale(0.7);
 }
 
 .task-node-in_progress {
@@ -3013,6 +3094,10 @@ input:focus-visible {
   color: var(--orange);
 }
 
+.widget-header button.is-active {
+  color: var(--orange);
+}
+
 .widget-window-controls {
   display: flex;
   flex: 0 0 auto;
@@ -3256,8 +3341,7 @@ input:focus-visible {
   background: #4a9ed2;
 }
 
-.widget-progress-track > em,
-.widget-task-reward {
+.widget-progress-track > em {
   display: none;
 }
 

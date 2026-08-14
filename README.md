@@ -104,7 +104,7 @@ The acceptance suite covers current-task selection, gate-based progress, task po
 
 The Tauri desktop app reuses the same React screens and progress engine as the browser dashboard. It stores the employee name and access code in the operating-system application-data folder; the code is not embedded in the installer.
 
-On first launch the employee enters their name and shared access code. The app then enables system startup, opens as a `520 x 260` widget inside a `540 x 280` frameless window, refreshes live data every minute, and remains available from the tray when closed. The expand button turns the same window into the `1440 x 900` full dashboard; the minimize icon returns it to widget mode.
+On first launch the employee enters their name and shared access code. Name matching is case-insensitive and must resolve to a real row in `PEOPLE`; the app never falls back to another employee. The app then enables system startup, opens as a `520 x 260` widget inside a `540 x 280` frameless window, refreshes live data every minute, and remains available from the tray when closed. The expand button turns the same window into the `1440 x 900` full dashboard; `Свернуть виджет` returns it to widget mode. The pin button and the tray action toggle always-on-top on both macOS and Windows.
 
 The real access code belongs only in `.env.local`, Google Apps Script properties, or the employee's local application settings. Never commit it to the repository.
 

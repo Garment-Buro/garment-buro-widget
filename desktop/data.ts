@@ -42,11 +42,15 @@ export async function loadDesktopDashboard(token: string, personName: string): P
     )
   };
 
-  return normalizeDashboard(raw, {
+  const state = normalizeDashboard(raw, {
     dataMode: "google",
     personName,
     updatedAt: payload.generatedAt || new Date().toISOString()
   });
+  if (!state.person) {
+    throw new Error(`Сотрудник «${personName}» не найден. Введите имя так, как оно указано в таблице PEOPLE.`);
+  }
+  return state;
 }
 
 function readableConnectionError(error?: string) {

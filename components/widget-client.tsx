@@ -1,36 +1,31 @@
 "use client";
 
-import { AlertTriangle, Clock3, Maximize2, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Clock3, Maximize2, Pin, PinOff, RefreshCw, X } from "lucide-react";
 import Image from "next/image";
 import { type MouseEvent, useCallback, useEffect, useState } from "react";
 import { formatDate } from "@/lib/date";
+import { personAsset } from "@/lib/person-assets";
 import { rewardTierForPercent } from "@/lib/reward-tier";
 import type { DashboardState } from "@/lib/types";
 
 const refreshMs = 60_000;
-const personAssets: Partial<Record<string, { full: string; avatar: string }>> = {
-  "Вера": {
-    full: "/assets/people/vera-full.png",
-    avatar: "/assets/people/vera-avatar.png"
-  },
-  "Никита": {
-    full: "/assets/people/nikita-full.png",
-    avatar: "/assets/people/nikita-avatar.png"
-  }
-};
 
 export function WidgetClient({
   initialState,
   loadState,
   onOpenDashboard,
   onHideWidget,
-  onStartDrag
+  onStartDrag,
+  isAlwaysOnTop,
+  onToggleAlwaysOnTop
 }: {
   initialState: DashboardState;
   loadState?: () => Promise<DashboardState>;
   onOpenDashboard?: () => void;
   onHideWidget?: () => void;
   onStartDrag?: () => void;
+  isAlwaysOnTop?: boolean;
+  onToggleAlwaysOnTop?: () => void;
 }) {
   const [state, setState] = useState(initialState);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -109,6 +104,18 @@ export function WidgetClient({
             <button type="button" onClick={() => { void refresh(); }} disabled={isRefreshing} title="Обновить данные" aria-label="Обновить данные">
               <RefreshCw className={isRefreshing ? "spin" : undefined} size={16} />
             </button>
+            {onToggleAlwaysOnTop ? (
+              <button
+                className={isAlwaysOnTop ? "is-active" : undefined}
+                type="button"
+                onClick={onToggleAlwaysOnTop}
+                title={isAlwaysOnTop ? "Открепить от верхнего слоя" : "Закрепить поверх всех окон"}
+                aria-label={isAlwaysOnTop ? "Открепить виджет" : "Закрепить виджет поверх всех окон"}
+                aria-pressed={isAlwaysOnTop}
+              >
+                {isAlwaysOnTop ? <PinOff size={16} /> : <Pin size={16} />}
+              </button>
+            ) : null}
             <button type="button" onClick={openDashboard} title="Открыть полный дашборд" aria-label="Открыть полный дашборд">
               <Maximize2 size={16} />
             </button>
@@ -124,7 +131,7 @@ export function WidgetClient({
           <aside className="widget-person">
             <div className="widget-person-art">
               <Image
-                src={personAssets[person.name]?.full || "/assets/people/vera-full.png"}
+                src={personAsset(person.name, "full") || "/assets/people/person-placeholder.svg"}
                 alt={`Аватар: ${person.name}`}
                 fill
                 sizes="150px"
@@ -152,9 +159,6 @@ export function WidgetClient({
               <span className="widget-critical"><AlertTriangle size={16} />{priorityLabel}</span>
               <span><Clock3 size={16} />{currentTask.deadline ? `Срок ${shortDate(currentTask.deadline)}` : "Срок не задан"}</span>
             </div>
-            {projectedProgress > progress ? (
-              <span className="widget-task-reward">+{displayPercent(contribution)}%</span>
-            ) : null}
           </button>
 
           <section className="widget-progress" aria-label={`Прогресс до MVP: ${progress}%`}>
