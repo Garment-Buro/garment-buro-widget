@@ -1932,6 +1932,7 @@ function TaskDrawer({
   const canStart = !completedStatuses.has(task.status);
   const taskContext = state.taskContexts.find((context) => context.taskId === task.id);
   const taskPerson = state.people.find((person) => samePerson(person.name, task.owner));
+  const taskEstimateOwnerKey = taskPerson?.id || task.owner;
   const suggestedTimeEstimate = suggestTaskTimeEstimate(task);
 
   useEffect(() => {
@@ -1940,10 +1941,10 @@ function TaskDrawer({
     setConfirmation("idle");
     setFeedback("");
     setCommandProgress(null);
-    setTimeEstimate(window.localStorage.getItem(taskEstimateStorageKey(taskPerson?.id || task.owner, task.id)) || "");
+    setTimeEstimate(window.localStorage.getItem(taskEstimateStorageKey(taskEstimateOwnerKey, task.id)) || "");
     setShowCustomEstimate(false);
     setCustomEstimate("");
-  }, [task.id]);
+  }, [task.id, taskEstimateOwnerKey]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1979,7 +1980,7 @@ function TaskDrawer({
   function confirmDrawerTimeEstimate(value: string) {
     const normalizedValue = value.trim();
     if (!normalizedValue) return;
-    window.localStorage.setItem(taskEstimateStorageKey(taskPerson?.id || task.owner, task.id), normalizedValue);
+    window.localStorage.setItem(taskEstimateStorageKey(taskEstimateOwnerKey, task.id), normalizedValue);
     setTimeEstimate(normalizedValue);
     setShowCustomEstimate(false);
     window.dispatchEvent(new CustomEvent("garment-buro:task-estimate-updated", {
