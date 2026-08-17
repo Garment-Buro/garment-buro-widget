@@ -122,6 +122,7 @@ const people = [
   ["PERSON_ID", "NAME", "ROLE", "PRIMARY_DIRECTION", "RESPONSIBILITIES", "CURRENT_FOCUS", "NOTES", "ACTIVE"],
   ["P-KOSTYA", "Костя", "Директор / Product Owner", "Управление / межфункционально", "Цели, приоритеты, approvals, разрешение конфликтов.", "Актуализация базы, распределение работы и запуск первого коммерческого контура", "Финальный approval owner.", "TRUE"],
   ["P-VERA", "Вера", "Designer / UI/UX + Product & Operations", "ДИЗАЙН / ПРОДУКТ И UX", "UI/UX, Figma, visual system, продуктовые и операционные задачи.", "TASK-019 — регистрация и запрос в Честный знак + задачи по приоритету TASKS", "D2 выносит Косте.", "TRUE"],
+  ["P-ALENA", "Алёна Баранова", "Potential Operations / Product Operations", "ОПЕРАЦИОННАЯ СИСТЕМА / PRODUCT OPERATIONS", "Операционное сопровождение, внешние контрагенты, документооборот/ЭДО, логистика, товарные данные/1С, маркировка, клиентские и order-operations.", "Onboarding / calibration перед запуском; конкретные TASK пока не назначены.", "Первые зоны ответственности калибруются по ограниченным реальным задачам.", "TRUE"],
   ["P-NIKITA", "Никита", "Developer", "ПРОДУКТ И UX / техническая реализация", "Frontend/backend, API, data model, интеграции.", "Назначается через TASKS; основной контур — разработка", "Фактический dev-scope должен быть отражён в TASKS.", "TRUE"]
 ];
 

@@ -39,10 +39,12 @@ export function buildDashboardDomain({
   usingSnapshot?: boolean;
 }) {
   const requestedPerson = normalizePersonName(personName);
-  const person = people.find((item) => (
+  const exactPerson = people.find((item) => (
     normalizePersonName(item.name) === requestedPerson
     || normalizePersonName(item.id) === requestedPerson
-  )) || null;
+  ));
+  const firstNameMatches = people.filter((item) => normalizePersonName(item.name).split(/\s+/)[0] === requestedPerson);
+  const person = exactPerson || (firstNameMatches.length === 1 ? firstNameMatches[0] : null);
   const selectedGoal = goals.find((item) => item.id === goalId) || null;
   const goalTasks = selectedGoal ? tasks.filter((task) => task.goalId === selectedGoal.id) : tasks;
   const goalGates = selectedGoal ? gates.filter((gate) => gate.goalId === selectedGoal.id) : gates;

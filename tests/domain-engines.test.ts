@@ -314,6 +314,7 @@ test("17d. private Drive context uses server credentials and task-scoped retriev
 
 test("18. dashboard person selection is case-insensitive and never falls back to another employee", () => {
   const upperNikita = person({ id: "P-NIKITA", name: "НИКИТА" });
+  const alyona = person({ id: "P-ALENA", name: "Алёна Баранова" });
   const known = buildDashboardDomain({
     goals: [goal002], milestones: [milestone], tasks: [task({ owner: "НИКИТА" })], gates: [], events: [],
     people: [vera, upperNikita], sources: [source("execution"), source("control")], goalId: goal002.id,
@@ -324,7 +325,13 @@ test("18. dashboard person selection is case-insensitive and never falls back to
     people: [vera, upperNikita], sources: [source("execution"), source("control")], goalId: goal002.id,
     personName: "Неизвестный", updatedAt: new Date().toISOString()
   });
+  const knownAlyona = buildDashboardDomain({
+    goals: [goal002], milestones: [milestone], tasks: [], gates: [], events: [],
+    people: [vera, upperNikita, alyona], sources: [source("execution"), source("control")], goalId: goal002.id,
+    personName: "Алена", updatedAt: new Date().toISOString()
+  });
   assert.equal(known.person?.id, "P-NIKITA");
+  assert.equal(knownAlyona.person?.id, "P-ALENA");
   assert.equal(unknown.person, null);
 });
 
@@ -349,7 +356,11 @@ test("20. a review handed to another person does not outrank active personal wor
 test("21. person assets resolve regardless of spreadsheet letter case", () => {
   assert.equal(personAsset(" НИКИТА ", "full"), "/assets/people/nikita-full.png");
   assert.equal(personAsset("вера", "avatar"), "/assets/people/vera-avatar.png");
-  assert.equal(personAsset("Костя", "full"), undefined);
+  assert.equal(personAsset("Костя", "full"), "/assets/people/kostya-full.png");
+  assert.equal(personAsset(" КОСТЯ ", "avatar"), "/assets/people/kostya-full.png");
+  assert.equal(personAsset("Алёна", "full"), "/assets/people/alyona-full.png");
+  assert.equal(personAsset(" АЛЕНА ", "avatar"), "/assets/people/alyona-avatar.png");
+  assert.equal(personAsset("Алёна Баранова", "avatar"), "/assets/people/alyona-avatar.png");
 });
 
 test("22. personal tree focus includes own tasks and their direct dependencies", () => {

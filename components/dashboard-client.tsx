@@ -2,10 +2,12 @@
 
 import {
   AlertTriangle,
+  ArrowDown,
   ArrowLeft,
   ArrowRight,
   BarChart3,
   Ban,
+  Bell,
   CalendarDays,
   Check,
   ChevronLeft,
@@ -19,6 +21,8 @@ import {
   Flag,
   Focus,
   Grid2X2,
+  GitBranch,
+  History,
   Layers3,
   Link2,
   ListChecks,
@@ -48,11 +52,12 @@ import {
   type LucideIcon
 } from "lucide-react";
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { formatDate } from "@/lib/date";
 import { buildDependencySummary } from "@/lib/domain/dependency-engine";
 import { calculateProgress } from "@/lib/domain/progress-engine";
 import { buildTaskRelationshipFocus, tasksInPersonalRelationshipView } from "@/lib/domain/task-relationship";
+import { activePushNotifications } from "@/lib/domain/notification-engine";
 import { buildPersonalTaskQueue, isTaskPausedForPerson } from "@/lib/domain/task-queue";
 import { formatTimer } from "@/lib/domain/work-session";
 import { personAsset, samePerson } from "@/lib/person-assets";
@@ -74,8 +79,10 @@ const refreshMs = 60_000;
 const completedStatuses = new Set(["DONE", "CANCELLED"]);
 type WorkspaceView = "personal" | "tree";
 type TreeViewMode = "all" | "personal";
+type MobileRouteMode = "mine" | "team" | "all";
 type IconComponent = LucideIcon;
 type TaskActionConfirmation = "idle" | "saving" | "success" | "error";
+type TaskTimeEstimate = "up-to-2h" | "3-4h" | "5-7h" | "1d" | "2d-plus" | "custom";
 
 type TaskActionDraft = {
   note: string;
@@ -236,12 +243,22 @@ export function DashboardClient({
     return result;
   }, [accessToken, onConfirmTaskAction, refresh, state]);
 
-  if (!person || !currentTask) {
+  if (!person) {
     return (
       <main className="empty-state">
         <AlertTriangle size={28} />
-        <h1>Не хватает данных для персонального экрана</h1>
-        <p>Добавьте активного сотрудника и хотя бы одну назначенную ему задачу.</p>
+        <h1>Сотрудник не найден</h1>
+        <p>Проверьте имя в листе PEOPLE.</p>
+      </main>
+    );
+  }
+
+  if (!currentTask) {
+    return (
+      <main className="empty-state account-empty-state">
+        <PersonArtwork person={person} variant="avatar" />
+        <h1>{person.name}</h1>
+        <p>Профиль активен. Задачи пока не назначены.</p>
       </main>
     );
   }
@@ -297,7 +314,13 @@ export function DashboardClient({
         />
       )}
       {selectedTask ? (
-        <TaskDrawer task={selectedTask} allTasks={state.tasks} state={state} onClose={() => setSelectedTask(null)} />
+        <TaskDrawer
+          task={selectedTask}
+          allTasks={state.tasks}
+          state={state}
+          onConfirmTaskAction={confirmTaskAction}
+          onClose={() => setSelectedTask(null)}
+        />
       ) : null}
     </>
   );
@@ -356,6 +379,10 @@ function PersonalWorkspace({
   const [commandProgress, setCommandProgress] = useState<TaskCommandProgress | null>(null);
   const [commandElapsedSeconds, setCommandElapsedSeconds] = useState(0);
   const [pomodoroMinutes, setPomodoroMinutes] = useState(25);
+  const [mobileDockPanel, setMobileDockPanel] = useState<"calls" | "pushes" | "blockers" | null>(null);
+  const [timeEstimate, setTimeEstimate] = useState("");
+  const [showCustomEstimate, setShowCustomEstimate] = useState(false);
+  const [customEstimate, setCustomEstimate] = useState("");
   const workSession = useWorkSession(person.id);
   const activeSession = workSession.session?.taskId === currentTask.id ? workSession.session : null;
   const goal = state.goal;
@@ -364,7 +391,6 @@ function PersonalWorkspace({
   const taskImpact = focusedProgress.taskPotentialPercent;
   const afterTaskProgress = focusedProgress.afterTaskPercent;
   const trackerTier = rewardTierForPercent(taskImpact);
-  const taskContext = state.taskContexts.find((context) => context.taskId === currentTask.id);
   const relatedIssue = state.issues.find((issue) => issue.relatedTask === currentTask.id);
   const currentIndex = Math.max(0, taskQueue.findIndex((task) => task.id === currentTask.id));
   const previousTask = currentIndex > 0 ? taskQueue[currentIndex - 1] : undefined;
@@ -374,10 +400,16 @@ function PersonalWorkspace({
   const outgoingGates = dependencies.unlocksGates.slice(0, Math.max(0, 2 - outgoingTasks.length));
   const eventTask = waitingTask || currentTask;
   const eventDate = eventTask.nextCheckDate || eventTask.deadline;
-  const nextAction = relatedIssue?.nextAction || taskContext?.handoffResult || currentTask.expectedResult;
+  const pushNotifications = activePushNotifications(state.notifications || [], person.id);
+  const waitingAndBlockedTasks = state.tasks.filter((task) => (
+    samePerson(task.owner, person.name)
+    && !completedStatuses.has(task.status)
+    && (task.status === "WAITING_EXTERNAL" || task.status === "BLOCKED" || Boolean(task.waitingFor))
+  ));
   const actionPreview = buildTaskActionPreview(taskAction, taskActionDraft, currentTask);
   const canAcceptTask = ["BACKLOG", "READY"].includes(currentTask.status);
   const canStartSession = currentTask.status === "IN_PROGRESS" && !activeSession;
+  const suggestedTimeEstimate = suggestTaskTimeEstimate(currentTask);
   const actionNote = confirmation === "saving"
     ? `${commandProgress?.label || "Отправляем команду в GPT"} · ${commandElapsedSeconds} сек.`
     : confirmation === "success"
@@ -412,6 +444,22 @@ function PersonalWorkspace({
     setCommandFeedback("");
     setCommandProgress(null);
     setConfirmation("idle");
+  }, [currentTask.id]);
+
+  useEffect(() => {
+    const storageKey = taskEstimateStorageKey(person.id, currentTask.id);
+    setTimeEstimate(window.localStorage.getItem(storageKey) || "");
+    setShowCustomEstimate(false);
+    setCustomEstimate("");
+  }, [currentTask.id, person.id]);
+
+  useEffect(() => {
+    const handleEstimateUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ taskId: string; value: string }>).detail;
+      if (detail?.taskId === currentTask.id) setTimeEstimate(detail.value);
+    };
+    window.addEventListener("garment-buro:task-estimate-updated", handleEstimateUpdate);
+    return () => window.removeEventListener("garment-buro:task-estimate-updated", handleEstimateUpdate);
   }, [currentTask.id]);
 
   function selectTaskAction(intent: TaskActionIntent) {
@@ -453,7 +501,7 @@ function PersonalWorkspace({
       commandId: createCommandId("ACCEPT"),
       taskId: currentTask.id,
       intent: "accept",
-      details: { note: `Я принял задачу ${currentTask.id} «${currentTask.title}» и начинаю работу.` },
+      details: { note: `Я оценил задачу в ${timeEstimate} и принял ${currentTask.id} «${currentTask.title}» в работу.` },
       preview: `Принять ${currentTask.id} и изменить статус на IN_PROGRESS.`
     }).catch(() => undefined);
   }
@@ -466,13 +514,21 @@ function PersonalWorkspace({
       taskId: currentTask.id,
       intent: "session_start",
       details: {
-        note: `Я начал рабочую сессию по задаче ${currentTask.id} «${currentTask.title}».`,
+        note: `Я оценил задачу в ${timeEstimate} и начал рабочую сессию по ${currentTask.id} «${currentTask.title}».`,
         sessionId,
         sessionStartedAt: new Date().toISOString()
       },
       preview: `Начать рабочую сессию ${sessionId} по ${currentTask.id}.`
     }).catch(() => undefined);
     if (result) workSession.start(currentTask.id, result.sessionId || sessionId);
+  }
+
+  function confirmTimeEstimate(value: string) {
+    const normalizedValue = value.trim();
+    if (!normalizedValue) return;
+    window.localStorage.setItem(taskEstimateStorageKey(person.id, currentTask.id), normalizedValue);
+    setTimeEstimate(normalizedValue);
+    setShowCustomEstimate(false);
   }
 
   async function confirmTaskAction() {
@@ -508,6 +564,20 @@ function PersonalWorkspace({
 
   return (
     <main className="personal-page">
+      <header className="mobile-identity">
+        <PersonArtwork person={person} variant="avatar" />
+        <div className="mobile-identity-copy">
+          <strong>{person.name}</strong>
+          <span><i /> онлайн</span>
+        </div>
+        <div className="mobile-identity-actions">
+          <span className={`live-state ${sourceTone !== "LIVE" ? "is-warning" : ""}`}><i /> {sourceTone}</span>
+          <button className="icon-button" onClick={onRefresh} disabled={isRefreshing} aria-label="Обновить данные" title="Обновить данные">
+            <RefreshCw size={22} className={isRefreshing ? "spin" : ""} />
+          </button>
+        </div>
+      </header>
+
       <aside className="identity-panel">
         <div className="identity-name-block">
           <p className="identity-name">{person.name}</p>
@@ -524,7 +594,7 @@ function PersonalWorkspace({
       </aside>
 
       <section className="workspace-main">
-        <header className="turn-header">
+        <header className="turn-header" id="mobile-focus">
           <div>
             <p className="screen-kicker">Личное рабочее пространство</p>
             <h1>Сейчас ваш ход</h1>
@@ -562,22 +632,25 @@ function PersonalWorkspace({
             <ChevronLeft size={22} />
           </button>
 
-          <article className="work-task-card">
+          <article
+            className="work-task-card"
+            role="button"
+            tabIndex={0}
+            aria-label={`Открыть подробности задачи ${currentTask.id}`}
+            onClick={(event) => {
+              if ((event.target as HTMLElement).closest("button, input, select, textarea")) return;
+              onOpenTask(currentTask);
+            }}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+              event.preventDefault();
+              onOpenTask(currentTask);
+            }}
+          >
             <div className="work-task-copy">
               <span className="task-id-chip">{currentTask.id}</span>
-              <h2>{currentTask.title}</h2>
-              <div className="task-detail-block">
-                <strong>Почему сейчас</strong>
-                <p>{currentTask.whyNow || "Задача находится в текущем фокусе проекта."}</p>
-              </div>
-              <div className="task-detail-block is-ready">
-                <strong>Что считается готовым</strong>
-                <p><Check size={15} />{currentTask.acceptanceCriteria || currentTask.expectedResult}</p>
-              </div>
-              <div className="task-detail-block is-next">
-                <strong>Next action</strong>
-                <p>{nextAction || "Зафиксировать результат и передать его следующему участнику процесса."}</p>
-              </div>
+              <h2 title={currentTask.title}>{displayTaskTitle(currentTask.title)}</h2>
+              <p className="work-task-summary">{compactTaskDescription(currentTask.whyNow || currentTask.expectedResult)}</p>
             </div>
 
             <aside className={activeSession ? "task-action-panel has-session" : "task-action-panel"}>
@@ -585,11 +658,11 @@ function PersonalWorkspace({
                 <button
                   className="primary-task-action"
                   type="button"
-                  disabled={confirmation === "saving" || (!canAcceptTask && !canStartSession)}
+                  disabled={confirmation === "saving" || !timeEstimate || (!canAcceptTask && !canStartSession)}
                   onClick={() => { void (canAcceptTask ? acceptTask() : startWorkingSession()); }}
                 >
                   <Play size={22} />
-                  <span>{canAcceptTask ? "Начать" : currentTask.status === "IN_PROGRESS" ? "Работаю" : statusLabel(currentTask.status)}</span>
+                  <span>{canAcceptTask || currentTask.status === "IN_PROGRESS" ? "Взять задачу" : statusLabel(currentTask.status)}</span>
                 </button>
               ) : null}
 
@@ -675,6 +748,22 @@ function PersonalWorkspace({
                 </div>
               ) : null}
             </aside>
+
+            <TimeEstimateSelector
+              suggested={suggestedTimeEstimate}
+              confirmed={timeEstimate}
+              showCustom={showCustomEstimate}
+              customValue={customEstimate}
+              onSelect={(estimate) => {
+                if (estimate === "custom") {
+                  setShowCustomEstimate(true);
+                  return;
+                }
+                confirmTimeEstimate(taskTimeEstimateLabel(estimate));
+              }}
+              onCustomChange={setCustomEstimate}
+              onConfirmCustom={() => confirmTimeEstimate(customEstimate)}
+            />
           </article>
 
           <button className="task-nav-button is-next" type="button" onClick={() => nextTask && onFocusTask(nextTask.id)} disabled={!nextTask} aria-label="Следующая задача" title={nextTask ? `${nextTask.id}: ${nextTask.title}` : "Это последняя доступная задача"}>
@@ -723,10 +812,11 @@ function PersonalWorkspace({
         <section className={`workspace-progress-card sprint-tracker tracker-tier-${trackerTier}`}>
           <p className="sprint-tracker-title">Прогресс проекта</p>
           <ProgressGauge value={projectProgress} projectedValue={afterTaskProgress} contribution={taskImpact} />
+          <p className="mobile-progress-after">После задачи: <b>{formatPercent(afterTaskProgress)}%</b></p>
           <p className="progress-explainer">* Потенциальный вклад после фиксации результата. Данные из Google Drive.</p>
         </section>
 
-        <section className="workspace-side-card event-card">
+        <section className="workspace-side-card event-card" id="mobile-history">
           <div className="side-card-icon"><CalendarDays size={23} /></div>
           <div><h3>Ближайшее событие</h3><p>{eventTask.id} · контрольная проверка</p><span>{formatDate(eventDate)}</span><button type="button" onClick={() => onOpenTask(eventTask)}>Открыть задачу</button></div>
         </section>
@@ -740,14 +830,285 @@ function PersonalWorkspace({
             <button type="button" onClick={() => fallbackTask ? onOpenTask(fallbackTask) : setTaskAction("stuck")}>{fallbackTask ? `Открыть ${fallbackTask.id}` : "Зафиксировать блокер"}</button>
           </div>
         </section>
+
+        <MobileRouteWindow
+          state={state}
+          person={person}
+          currentTask={currentTask}
+          taskQueue={taskQueue}
+          progress={focusedProgress}
+          onOpenTask={onOpenTask}
+        />
       </aside>
 
-      <footer className="workspace-footer">
+      <footer className="workspace-footer" id="workspace-data-footer">
         <span><Cloud size={16} />Последняя фиксация: {updatedTime(state.updatedAt)}</span><i /><span>Данные из Google Drive</span>
         <button type="button" onClick={onRefresh} disabled={isRefreshing}><RefreshCw size={15} className={isRefreshing ? "spin" : ""} />Обновить</button>
         <small>{sourceTone === "LIVE" ? "Данные актуальны" : sourceTone}</small>
       </footer>
+
+      {mobileDockPanel ? (
+        <MobileStatusPanel
+          mode={mobileDockPanel}
+          eventTask={eventTask}
+          eventDate={eventDate}
+          notifications={pushNotifications}
+          waitingTasks={waitingAndBlockedTasks}
+          allTasks={state.tasks}
+          onClose={() => setMobileDockPanel(null)}
+          onOpenTask={(task) => { setMobileDockPanel(null); onOpenTask(task); }}
+        />
+      ) : null}
+
+      <nav className="mobile-status-dock" aria-label="События проекта">
+        <div
+          className={`mobile-dock-progress tracker-tier-${trackerTier} ${taskImpact <= 0 ? "is-zero" : ""}`.trim()}
+          style={{
+            "--mobile-dock-progress": `${projectProgress}%`,
+            "--mobile-dock-projected": `${afterTaskProgress}%`
+          } as CSSProperties}
+          aria-label={`Прогресс ${formatPercent(projectProgress)}%, после задачи ${formatPercent(afterTaskProgress)}%`}
+        >
+          <span>{formatPercent(projectProgress)}%</span>
+          <div><i /><b /></div>
+          <strong>+{formatPercent(taskImpact)}%</strong>
+        </div>
+        <button className={mobileDockPanel === "calls" ? "is-active" : ""} type="button" onClick={() => setMobileDockPanel((value) => value === "calls" ? null : "calls")}>
+          <CalendarDays size={22} /><span>Созвоны</span>{eventDate ? <b>1</b> : null}
+        </button>
+        <button className={mobileDockPanel === "pushes" ? "is-active" : ""} type="button" onClick={() => setMobileDockPanel((value) => value === "pushes" ? null : "pushes")}>
+          <Bell size={22} /><span>Пуши</span>{pushNotifications.length ? <b>{pushNotifications.length}</b> : null}
+        </button>
+        <button className={mobileDockPanel === "blockers" ? "is-active" : ""} type="button" onClick={() => setMobileDockPanel((value) => value === "blockers" ? null : "blockers")}>
+          <AlertTriangle size={22} /><span>Ожидания</span>{waitingAndBlockedTasks.length ? <b>{waitingAndBlockedTasks.length}</b> : null}
+        </button>
+      </nav>
     </main>
+  );
+}
+
+function MobileStatusPanel({
+  mode,
+  eventTask,
+  eventDate,
+  notifications,
+  waitingTasks,
+  allTasks,
+  onClose,
+  onOpenTask
+}: {
+  mode: "calls" | "pushes" | "blockers";
+  eventTask: Task;
+  eventDate: string;
+  notifications: DashboardState["notifications"];
+  waitingTasks: Task[];
+  allTasks: Task[];
+  onClose: () => void;
+  onOpenTask: (task: Task) => void;
+}) {
+  const title = mode === "calls" ? "Созвоны и события" : mode === "pushes" ? "Пуши" : "Ожидания и блокеры";
+  const Icon = mode === "calls" ? CalendarDays : mode === "pushes" ? Bell : AlertTriangle;
+
+  return (
+    <aside className="mobile-status-panel" aria-label={title}>
+      <header>
+        <span><Icon size={20} /></span>
+        <strong>{title}</strong>
+        <button type="button" onClick={onClose} aria-label="Закрыть"><X size={18} /></button>
+      </header>
+
+      <div className="mobile-status-panel-list">
+        {mode === "calls" ? (
+          <button type="button" onClick={() => onOpenTask(eventTask)}>
+            <span><small>Ближайшее событие</small><strong>{eventTask.id} · контрольная проверка</strong></span>
+            <time>{eventDate ? formatDate(eventDate) : "Дата уточняется"}</time>
+            <ChevronRight size={18} />
+          </button>
+        ) : null}
+
+        {mode === "pushes" && notifications.length === 0 ? <p className="mobile-status-empty">Новых уведомлений нет.</p> : null}
+        {mode === "pushes" ? notifications.map((notification) => {
+          const linkedTask = allTasks.find((task) => task.id === notification.taskId);
+          const content = (
+            <>
+              <span><small>{notification.priority || "Уведомление"}</small><strong>{notification.title || notification.message}</strong></span>
+              {notification.dueAt ? <time>{formatDate(notification.dueAt)}</time> : null}
+              {linkedTask ? <ChevronRight size={18} /> : null}
+            </>
+          );
+          return linkedTask
+            ? <button type="button" key={notification.id} onClick={() => onOpenTask(linkedTask)}>{content}</button>
+            : <div className="mobile-status-row" key={notification.id}>{content}</div>;
+        }) : null}
+
+        {mode === "blockers" && waitingTasks.length === 0 ? <p className="mobile-status-empty">Активных ожиданий и блокеров нет.</p> : null}
+        {mode === "blockers" ? waitingTasks.map((task) => (
+          <button type="button" key={task.id} onClick={() => onOpenTask(task)}>
+            <span><small>{task.status === "BLOCKED" ? "Блокер" : "Ожидание"}</small><strong>{task.waitingFor || task.title}</strong></span>
+            <time>{task.nextCheckDate ? `Проверка ${shortDate(task.nextCheckDate)}` : task.id}</time>
+            <ChevronRight size={18} />
+          </button>
+        )) : null}
+      </div>
+    </aside>
+  );
+}
+
+function MobileRouteWindow({
+  state,
+  person,
+  currentTask,
+  taskQueue,
+  progress,
+  onOpenTask
+}: {
+  state: DashboardState;
+  person: Person;
+  currentTask: Task;
+  taskQueue: Task[];
+  progress: DashboardState["progress"];
+  onOpenTask: (task: Task) => void;
+}) {
+  const [mode, setMode] = useState<MobileRouteMode>("mine");
+  const [hideDone, setHideDone] = useState(false);
+  const relationshipIds = useMemo(
+    () => tasksInPersonalRelationshipView(state.tasks, person.name),
+    [person.name, state.tasks]
+  );
+  const routeTasks = useMemo(() => {
+    let candidates: Task[];
+    if (mode === "mine") {
+      candidates = taskQueue;
+    } else if (mode === "team") {
+      candidates = state.tasks.filter((task) => relationshipIds.has(task.id));
+    } else {
+      candidates = state.tasks;
+    }
+    const uniqueTasks = Array.from(new Map(candidates.map((task) => [task.id, task])).values());
+    return hideDone
+      ? uniqueTasks.filter((task) => task.id === currentTask.id || !completedStatuses.has(task.status))
+      : uniqueTasks;
+  }, [currentTask, hideDone, mode, relationshipIds, state.tasks, taskQueue]);
+  const routeGroups = mode === "mine"
+    ? routeTasks.map((task, index) => ({ depth: index, tasks: [task] }))
+    : buildMobileRouteGroups(routeTasks, state.tasks, currentTask.id);
+  const taskContributions = useMemo(() => new Map(routeTasks.map((task) => {
+    const dependencies = buildDependencySummary(task, state.tasks, state.progressGates);
+    const taskProgress = calculateProgress(state.goal, state.progressGates, task, dependencies, state.changeEvents).progress;
+    return [task.id, taskProgress.taskPotentialPercent];
+  })), [routeTasks, state.changeEvents, state.goal, state.progressGates, state.tasks]);
+  const currentGroupIndex = routeGroups.findIndex((group) => group.tasks.some((task) => task.id === currentTask.id));
+  const hasBranch = routeGroups.some((group) => group.tasks.length > 1);
+  const trackerTier = rewardTierForPercent(progress.taskPotentialPercent);
+  const routeProgressStyle = {
+    "--mobile-route-progress": `${state.progress.readyPercent}%`,
+    "--mobile-route-projected": `${progress.afterTaskPercent}%`
+  } as CSSProperties;
+  const entryLabel = mode === "mine"
+    ? `Личная очередь · ${routeTasks.length} ${taskWord(routeTasks.length)}`
+    : mode === "team"
+      ? "Команда · связанные задачи"
+      : "Проект · все направления";
+
+  return (
+    <section className="mobile-route-window" id="mobile-route-window">
+      <header className="mobile-route-header">
+        <div><small>{person.name} · задачи по приоритету</small><strong>Мой маршрут</strong></div>
+        <button
+          type="button"
+          className={hideDone ? "is-active" : ""}
+          onClick={() => setHideDone((value) => !value)}
+          aria-label={hideDone ? "Показать завершённые задачи" : "Скрыть завершённые задачи"}
+          title={hideDone ? "Показать завершённые" : "Скрыть завершённые"}
+          aria-pressed={hideDone}
+        >
+          <Filter size={19} />
+        </button>
+      </header>
+
+      <div className="mobile-route-tabs" role="tablist" aria-label="Состав маршрута">
+        <button type="button" role="tab" aria-selected={mode === "mine"} className={mode === "mine" ? "is-active" : ""} onClick={() => setMode("mine")}>Мой</button>
+        <button type="button" role="tab" aria-selected={mode === "team"} className={mode === "team" ? "is-active" : ""} onClick={() => setMode("team")}>Команда</button>
+        <button type="button" role="tab" aria-selected={mode === "all"} className={mode === "all" ? "is-active" : ""} onClick={() => setMode("all")}>Всё дерево</button>
+      </div>
+
+      <div className="mobile-route-scroll">
+        <div className="mobile-route-entry"><UsersRound size={20} /><strong>{entryLabel}</strong></div>
+
+        {routeGroups.map((group, groupIndex) => {
+          const isAfterCurrent = currentGroupIndex >= 0 && groupIndex > currentGroupIndex;
+          return (
+            <div className="mobile-route-stage" key={group.depth}>
+              <div className="mobile-route-connector" aria-hidden><ArrowDown size={23} /></div>
+              {group.tasks.length > 1 ? (
+                <section className={`mobile-route-branch ${isAfterCurrent ? "is-handoff" : ""}`.trim()}>
+                  <header>
+                    <span>{isAfterCurrent ? "Handoff" : `Этап ${groupIndex + 1}`}</span>
+                    <strong>{isAfterCurrent ? `Открывает ${group.tasks.length} ${taskWord(group.tasks.length)}` : `${group.tasks.length} параллельные задачи`}</strong>
+                  </header>
+                  <div>
+                    {group.tasks.map((task) => (
+                      <MobileRouteTaskCard key={task.id} task={task} allTasks={state.tasks} contribution={taskContributions.get(task.id) || 0} current={task.id === currentTask.id} onOpen={() => onOpenTask(task)} />
+                    ))}
+                  </div>
+                </section>
+              ) : (
+                <MobileRouteTaskCard task={group.tasks[0]} allTasks={state.tasks} contribution={taskContributions.get(group.tasks[0].id) || 0} current={group.tasks[0].id === currentTask.id} onOpen={() => onOpenTask(group.tasks[0])} />
+              )}
+            </div>
+          );
+        })}
+
+        {hasBranch ? (
+          <>
+            <div className="mobile-route-connector" aria-hidden><ArrowDown size={23} /></div>
+            <div className="mobile-route-join"><UsersRound size={20} /><strong>Все ветки сходятся в следующий этап</strong></div>
+          </>
+        ) : null}
+
+        <div className="mobile-route-connector" aria-hidden><ArrowDown size={23} /></div>
+        <section className={`mobile-route-goal tracker-tier-${trackerTier}`} style={routeProgressStyle}>
+          <header><span>{state.goal?.id || "GOAL"}</span><strong>{state.goal?.title || "Commercial MVP"}</strong></header>
+          <p>{formatPercent(state.progress.readyPercent)}% → {formatPercent(progress.afterTaskPercent)}%</p>
+          <div className="mobile-route-goal-track"><i /><b /></div>
+          <strong className="mobile-route-contribution">+{formatPercent(progress.taskPotentialPercent)}% ваш вклад</strong>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function MobileRouteTaskCard({
+  task,
+  allTasks,
+  contribution,
+  current,
+  onOpen
+}: {
+  task: Task;
+  allTasks: Task[];
+  contribution: number;
+  current: boolean;
+  onOpen: () => void;
+}) {
+  const status = effectiveStatus(task, allTasks);
+  const contributionTier = rewardTierForPercent(contribution);
+  return (
+    <button
+      className={`mobile-route-task task-node-${status.toLowerCase()} ${current ? "is-current" : ""}`.trim()}
+      type="button"
+      onClick={onOpen}
+      aria-current={current ? "step" : undefined}
+    >
+      <span className="mobile-route-task-id">{task.id}</span>
+      <strong>{task.title}</strong>
+      <span className="mobile-route-task-owner"><OwnerMark owner={task.owner} />{task.owner || "Не назначен"}</span>
+      <span className="mobile-route-task-footer">
+        <StatusPill status={status} />
+        <small><Clock3 size={13} />{task.deadline ? `Срок ${shortDate(task.deadline)}` : "Без срока"}</small>
+        <b className={`mobile-route-task-contribution tracker-tier-${contributionTier} ${contribution <= 0 ? "is-zero" : ""}`.trim()}>+{formatPercent(contribution)}%</b>
+      </span>
+    </button>
   );
 }
 
@@ -793,6 +1154,8 @@ function TaskTree({
   onToggleAlwaysOnTop?: () => void;
 }) {
   const [hoveredOwnTaskId, setHoveredOwnTaskId] = useState("");
+  const mobileTreeCanvasRef = useRef<HTMLDivElement>(null);
+  const mobileCurrentNodeRef = useRef<HTMLButtonElement>(null);
   const goal = state.goal;
   const lanes = useMemo(() => buildLanes(state.tasks), [state.tasks]);
   const personalViewIds = useMemo(
@@ -814,9 +1177,134 @@ function TaskTree({
     })
   }));
   const chain = [currentTask, ...collectDownstream(currentTask, state.tasks).slice(0, 3)];
+  const mobileTasks = visibleLanes.flatMap((lane) => lane.tasks);
+  const mobileColumns = buildMobileTreeColumns(mobileTasks, state.tasks);
+  const mobileProgress = calculateProgress(
+    goal,
+    state.progressGates,
+    currentTask,
+    buildDependencySummary(currentTask, state.tasks, state.progressGates),
+    state.changeEvents
+  ).progress;
+  const mobileProgressTier = rewardTierForPercent(mobileProgress.taskPotentialPercent);
+  const mobileProgressStyle = {
+    "--mobile-tree-progress": `${projectProgress}%`,
+    "--mobile-tree-projected": `${mobileProgress.afterTaskPercent}%`
+  } as CSSProperties;
+
+  const focusMobileCurrentTask = useCallback((behavior: ScrollBehavior = "smooth") => {
+    if (!window.matchMedia("(max-width: 820px)").matches) return;
+    const canvas = mobileTreeCanvasRef.current;
+    const node = mobileCurrentNodeRef.current;
+    if (!canvas || !node) return;
+    const canvasRect = canvas.getBoundingClientRect();
+    const nodeRect = node.getBoundingClientRect();
+    canvas.scrollTo({
+      left: canvas.scrollLeft + nodeRect.left - canvasRect.left - (canvas.clientWidth - nodeRect.width) / 2,
+      top: canvas.scrollTop + nodeRect.top - canvasRect.top - (canvas.clientHeight - nodeRect.height) / 2,
+      behavior
+    });
+  }, []);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => focusMobileCurrentTask("auto"));
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentTask.id, focusMobileCurrentTask, search, showFilters, statusFilter, viewMode]);
 
   return (
     <main className="tree-page">
+      <section className="mobile-tree-screen">
+        <header className="mobile-tree-header">
+          <button className="mobile-tree-icon-button" type="button" onClick={onBack} aria-label="Вернуться к фокусу">
+            <ArrowLeft size={21} />
+          </button>
+          <div className="mobile-tree-heading">
+            <span>{goal?.id || "PROJECT"}</span>
+            <strong>Древо задач</strong>
+          </div>
+          <button className="mobile-tree-icon-button" type="button" onClick={() => focusMobileCurrentTask()} aria-label="Показать текущую задачу">
+            <Focus size={21} />
+          </button>
+        </header>
+
+        <div className="mobile-tree-controls">
+          <div className="mobile-tree-modes" aria-label="Режим дерева">
+            <button type="button" className={viewMode === "personal" ? "is-active" : ""} onClick={() => onViewMode("personal")}>Мои связи</button>
+            <button type="button" className={viewMode === "all" ? "is-active" : ""} onClick={() => onViewMode("all")}>Всё дерево</button>
+          </div>
+          <button className={`mobile-tree-filter-button ${showFilters ? "is-active" : ""}`.trim()} type="button" onClick={onToggleFilters} aria-label="Фильтры" aria-expanded={showFilters}>
+            <Filter size={17} />
+          </button>
+        </div>
+
+        {showFilters ? (
+          <div className="mobile-tree-filter-panel">
+            <label>
+              <Search size={16} />
+              <input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Поиск по задачам" />
+            </label>
+            <div>
+              {["ALL", "DONE", "IN_PROGRESS", "READY", "WAITING_EXTERNAL", "LOCKED"].map((status) => (
+                <button key={status} type="button" className={statusFilter === status ? "is-active" : ""} onClick={() => onFilter(status)}>
+                  {status === "ALL" ? "Все" : statusLabel(status)}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="mobile-tree-canvas" ref={mobileTreeCanvasRef} aria-label="Горизонтальная карта задач">
+          <div className="mobile-tree-board">
+            {mobileColumns.map((column, columnIndex) => (
+              <div className="mobile-tree-column-wrap" key={column.depth}>
+                <section className="mobile-tree-column">
+                  <header>
+                    <span>{columnIndex + 1}</span>
+                    <div><strong>{mobileTreeColumnLabel(column.depth, column.tasks, currentTask)}</strong><small>Задач: {column.tasks.length}</small></div>
+                  </header>
+                  <div className="mobile-tree-task-list">
+                    {column.tasks.map((task) => {
+                      const status = effectiveStatus(task, state.tasks);
+                      const isCurrent = task.id === currentTask.id;
+                      return (
+                        <button
+                          ref={isCurrent ? mobileCurrentNodeRef : undefined}
+                          className={`mobile-tree-node task-node-${status.toLowerCase()} ${isCurrent ? "is-current" : ""}`.trim()}
+                          type="button"
+                          key={task.id}
+                          onClick={() => onOpenTask(task)}
+                          aria-current={isCurrent ? "step" : undefined}
+                        >
+                          <span className="mobile-tree-node-meta"><b>{task.id}</b><StatusPill status={status} /></span>
+                          <strong>{task.title}</strong>
+                          <span className="mobile-tree-node-direction">{task.direction || "Общее направление"}</span>
+                          <span className="mobile-tree-node-owner"><OwnerMark owner={task.owner} />{task.owner || "Не назначен"}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+                <div className="mobile-tree-flow-arrow" aria-hidden><ArrowRight size={22} /></div>
+              </div>
+            ))}
+
+            <section className="mobile-tree-column mobile-tree-goal-column">
+              <header><span><Flag size={14} /></span><div><strong>Цель проекта</strong><small>Финальная точка</small></div></header>
+              <div className="mobile-tree-goal-node">
+                <Flag size={25} />
+                <span><small>{goal?.id || "GOAL"}</small><strong>{goal?.title || "Commercial MVP"}</strong><em>{formatPercent(projectProgress)}% готовности</em></span>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <footer className={`mobile-tree-progress tracker-tier-${mobileProgressTier}`} style={mobileProgressStyle}>
+          <div><span>Готовность</span><strong>{formatPercent(projectProgress)}%</strong></div>
+          <div className="mobile-tree-progress-track"><i /><b /></div>
+          <div className="mobile-tree-progress-contribution"><span>После текущей</span><strong>+{formatPercent(mobileProgress.taskPotentialPercent)}%</strong></div>
+        </footer>
+      </section>
+
       <aside className="tree-sidebar">
         <button className="tree-brand" onClick={onBack} aria-label="Вернуться в рабочее пространство">
           <span>GARMENT</span><span>BURO</span><small>Project control</small>
@@ -982,8 +1470,9 @@ function TaskTree({
 
 function PersonArtwork({ person, variant }: { person: Person; variant: "full" | "avatar" }) {
   const asset = personAsset(person.name, variant);
+  const personClass = samePerson(person.name, "Костя") ? " person-artwork-kostya" : "";
   return (
-    <div className={`person-artwork person-artwork-${variant}`} aria-label={`Аватар: ${person.name}`}>
+    <div className={`person-artwork person-artwork-${variant}${personClass}`} aria-label={`Аватар: ${person.name}`}>
       {asset ? (
         <div className="person-asset-frame">
           <Image className="person-asset-image" src={asset} alt={person.name} fill sizes={variant === "full" ? "240px" : "92px"} priority />
@@ -1097,7 +1586,7 @@ function TaskActionPopover({
       ) : null}
 
       <div className={`task-action-preview ${preview ? "is-ready" : ""}`} aria-live="polite">
-        <small>Будет отправлено в GPT</small>
+        <small>Будет зафиксировано</small>
         <p>{preview || previewHint(intent)}</p>
       </div>
       <footer className="task-action-popover-footer">
@@ -1110,12 +1599,14 @@ function TaskActionPopover({
           onClick={onSubmit}
         >
           {confirmation === "saving" ? <RefreshCw className="spin" size={17} /> : null}
-          <span>
+          <span title="Отправить в GPT">
             {confirmation === "saving"
-              ? "Отправляем в GPT"
+              ? "Фиксируем"
+              : confirmation === "success"
+                ? "Зафиксировано"
               : intent === "session_close"
                 ? "Отправить и закрыть сессию"
-                : "Отправить в GPT"}
+                : "Зафиксировать"}
           </span>
         </button>
       </footer>
@@ -1149,6 +1640,70 @@ function TaskActionButton({
       <Icon size={18} />
       <span>{label}</span>
     </button>
+  );
+}
+
+function TimeEstimateSelector({
+  suggested,
+  confirmed,
+  showCustom,
+  customValue,
+  onSelect,
+  onCustomChange,
+  onConfirmCustom
+}: {
+  suggested: Exclude<TaskTimeEstimate, "custom">;
+  confirmed: string;
+  showCustom: boolean;
+  customValue: string;
+  onSelect: (estimate: TaskTimeEstimate) => void;
+  onCustomChange: (value: string) => void;
+  onConfirmCustom: () => void;
+}) {
+  const options: Array<{ value: TaskTimeEstimate; label: string; icon: IconComponent }> = [
+    { value: "up-to-2h", label: "До 2 ч", icon: Timer },
+    { value: "3-4h", label: "3–4 ч", icon: Clock3 },
+    { value: "5-7h", label: "5–7 ч", icon: Focus },
+    { value: "1d", label: "1 день", icon: CalendarDays },
+    { value: "2d-plus", label: "2+ дня", icon: CalendarDays },
+    { value: "custom", label: "Свой вариант", icon: Settings }
+  ];
+
+  return (
+    <section className="task-time-estimator" aria-label="Оценка времени" onClick={(event) => event.stopPropagation()}>
+      <header className="task-time-estimator-header">
+        <Clock3 size={16} />
+        <strong>Оценка времени</strong>
+        <small>Система предполагает: {taskTimeEstimateLabel(suggested)}</small>
+      </header>
+      <div className="task-time-options">
+        {options.map(({ value, label, icon: Icon }) => {
+          const selected = value !== "custom" && confirmed === taskTimeEstimateLabel(value);
+          return (
+            <button
+              className={`${value === suggested ? "is-suggested" : ""} ${selected ? "is-selected" : ""} ${value === "custom" && showCustom ? "is-selected" : ""}`.trim()}
+              type="button"
+              key={value}
+              aria-pressed={selected || (value === "custom" && showCustom)}
+              onClick={() => onSelect(value)}
+            >
+              <Icon size={16} />
+              <span>{label}</span>
+            </button>
+          );
+        })}
+      </div>
+      {showCustom ? (
+        <div className="task-time-custom">
+          <input value={customValue} onChange={(event) => onCustomChange(event.target.value)} placeholder="Например, 10 часов" aria-label="Своя оценка времени" autoFocus />
+          <button type="button" disabled={!customValue.trim()} onClick={onConfirmCustom}>Подтвердить</button>
+        </div>
+      ) : null}
+      <p className={`task-time-note ${confirmed ? "is-confirmed" : ""}`.trim()}>
+        <CircleHelp size={14} />
+        {confirmed ? `Оценка подтверждена: ${confirmed}. Можно начинать задачу.` : "Сначала подтвердите время, затем можно начинать задачу."}
+      </p>
+    </section>
   );
 }
 
@@ -1213,7 +1768,9 @@ function ProgressGauge({
       aria-label={`Сейчас ${formatPercent(value)}%, задача прибавит ${formatPercent(contribution)}%, после задачи будет ${formatPercent(projectedValue)}%`}
       style={{
         "--progress-angle": `${currentAngle}deg`,
-        "--projected-angle": `${projectedAngle}deg`
+        "--projected-angle": `${projectedAngle}deg`,
+        "--progress-value": `${clampPercent(value)}%`,
+        "--projected-value": `${clampPercent(projectedValue)}%`
       } as CSSProperties}
     >
       <div>
@@ -1334,7 +1891,7 @@ function TaskNode({
 function OwnerMark({ owner }: { owner: string }) {
   const asset = personAsset(owner, "avatar");
   return (
-    <span className={asset ? "owner-mark has-image" : "owner-mark"} aria-hidden>
+    <span className={asset ? `owner-mark has-image ${samePerson(owner, "Костя") ? "is-kostya" : ""}`.trim() : "owner-mark"} aria-hidden>
       {asset ? <Image src={asset} alt="" fill sizes="20px" /> : owner ? owner.slice(0, 1) : "?"}
     </span>
   );
@@ -1353,36 +1910,216 @@ function TaskDrawer({
   task,
   allTasks,
   state,
+  onConfirmTaskAction,
   onClose
 }: {
   task: Task;
   allTasks: Task[];
   state: DashboardState;
+  onConfirmTaskAction: (submission: TaskActionSubmission, onProgress?: (progress: TaskCommandProgress) => void) => Promise<TaskActionSaveResult | undefined>;
   onClose: () => void;
 }) {
+  const [taskAction, setTaskAction] = useState<TaskActionIntent | null>(null);
+  const [draft, setDraft] = useState<TaskActionDraft>(emptyTaskActionDraft);
+  const [confirmation, setConfirmation] = useState<TaskActionConfirmation>("idle");
+  const [feedback, setFeedback] = useState("");
+  const [commandProgress, setCommandProgress] = useState<TaskCommandProgress | null>(null);
+  const [timeEstimate, setTimeEstimate] = useState("");
+  const [showCustomEstimate, setShowCustomEstimate] = useState(false);
+  const [customEstimate, setCustomEstimate] = useState("");
   const status = effectiveStatus(task, allTasks);
+  const preview = buildTaskActionPreview(taskAction, draft, task);
+  const canStart = !completedStatuses.has(task.status);
+  const taskContext = state.taskContexts.find((context) => context.taskId === task.id);
+  const taskPerson = state.people.find((person) => samePerson(person.name, task.owner));
+  const suggestedTimeEstimate = suggestTaskTimeEstimate(task);
+
+  useEffect(() => {
+    setTaskAction(null);
+    setDraft(emptyTaskActionDraft());
+    setConfirmation("idle");
+    setFeedback("");
+    setCommandProgress(null);
+    setTimeEstimate(window.localStorage.getItem(taskEstimateStorageKey(taskPerson?.id || task.owner, task.id)) || "");
+    setShowCustomEstimate(false);
+    setCustomEstimate("");
+  }, [task.id]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && confirmation !== "saving") onClose();
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [confirmation, onClose]);
+
+  useEffect(() => {
+    if (confirmation !== "success") return;
+    const timer = window.setTimeout(() => {
+      setTaskAction(null);
+      setDraft(emptyTaskActionDraft());
+      setConfirmation("idle");
+    }, 1_600);
+    return () => window.clearTimeout(timer);
+  }, [confirmation]);
+
+  function chooseTaskAction(intent: TaskActionIntent) {
+    if (confirmation === "saving") return;
+    setTaskAction((current) => current === intent ? null : intent);
+    setDraft(emptyTaskActionDraft());
+    setConfirmation("idle");
+    setFeedback("");
+  }
+
+  function confirmDrawerTimeEstimate(value: string) {
+    const normalizedValue = value.trim();
+    if (!normalizedValue) return;
+    window.localStorage.setItem(taskEstimateStorageKey(taskPerson?.id || task.owner, task.id), normalizedValue);
+    setTimeEstimate(normalizedValue);
+    setShowCustomEstimate(false);
+    window.dispatchEvent(new CustomEvent("garment-buro:task-estimate-updated", {
+      detail: { taskId: task.id, value: normalizedValue }
+    }));
+  }
+
+  async function sendDrawerCommand(submission: TaskActionSubmission) {
+    setConfirmation("saving");
+    setFeedback("");
+    setCommandProgress({ stage: "connecting", label: "Фиксируем состояние задачи" });
+    try {
+      const result = await onConfirmTaskAction(submission, setCommandProgress);
+      setFeedback(commandSuccessMessage(result));
+      setConfirmation("success");
+      return result;
+    } catch (error) {
+      setFeedback(readErrorMessage(error, "Не удалось зафиксировать изменение."));
+      setConfirmation("error");
+      return undefined;
+    }
+  }
+
+  async function startOrContinueTask() {
+    if (!canStart || confirmation === "saving") return;
+    const accepting = ["BACKLOG", "READY"].includes(task.status);
+    await sendDrawerCommand({
+      commandId: createCommandId(accepting ? "ACCEPT" : "SESSION-START"),
+      taskId: task.id,
+      intent: accepting ? "accept" : "session_start",
+      details: {
+        note: accepting ? `Я оценил задачу в ${timeEstimate}, принял ${task.id} «${task.title}» и начинаю работу.` : `Я оценил задачу в ${timeEstimate} и продолжаю работу по ${task.id} «${task.title}».`,
+        sessionId: accepting ? undefined : createCommandId("SESSION"),
+        sessionStartedAt: accepting ? undefined : new Date().toISOString()
+      },
+      preview: accepting ? `Принять ${task.id} и начать работу.` : `Продолжить работу по ${task.id}.`
+    });
+  }
+
+  async function confirmDrawerAction() {
+    if (!taskAction || !preview || confirmation === "saving") return;
+    await sendDrawerCommand({
+      commandId: createCommandId(taskAction.toUpperCase()),
+      taskId: task.id,
+      intent: taskAction,
+      details: {
+        note: draft.note.trim(),
+        nextCheckDate: draft.nextCheckDate || undefined,
+        acceptanceCriteria: taskAction === "done" ? task.acceptanceCriteria || task.expectedResult : undefined
+      },
+      preview
+    });
+  }
+
   return (
     <>
       <button className="drawer-backdrop" aria-label="Закрыть детали задачи" onClick={onClose} />
-      <aside className="task-drawer">
-        <header>
-          <div><span>{task.id} · {task.owner}</span><h2>{task.title}</h2></div>
+      <aside className="task-drawer has-mobile-console" role="dialog" aria-modal="true" aria-labelledby={`task-dialog-title-${task.id}`}>
+        <header className="task-modal-header">
+          <div><span>{task.id} · {task.owner}</span><h2 id={`task-dialog-title-${task.id}`}>{displayTaskTitle(task.title)}</h2></div>
           <button className="icon-button" onClick={onClose} aria-label="Закрыть"><X size={19} /></button>
         </header>
-        <div className="drawer-tags">
-          <StatusPill status={status} />
-          <span className="outline-tag">Gate {task.launchGate}</span>
-          {task.projectFocus ? <span className="outline-tag accent">Project focus</span> : null}
+
+        <div className="task-modal-body">
+          <section className="task-modal-primary" aria-label="Контекст и результат задачи">
+            <div className="drawer-tags">
+              <StatusPill status={status} />
+              <span className="outline-tag">Gate {task.launchGate}</span>
+              {task.projectFocus ? <span className="outline-tag accent">Project focus</span> : null}
+              {task.priority ? <span className="outline-tag desktop-task-extra">Приоритет {task.priority}</span> : null}
+            </div>
+            <h3 className="desktop-task-extra">Контекст и результат</h3>
+            <DrawerField label="Почему сейчас" value={task.whyNow} />
+            <DrawerField label="Ожидаемый результат" value={task.expectedResult} />
+            <DrawerField label="Критерий готовности" value={task.acceptanceCriteria} />
+            {taskContext?.currentWorkingState ? <div className="desktop-task-extra"><DrawerField label="Текущее рабочее состояние" value={taskContext.currentWorkingState} /></div> : null}
+            {taskContext?.openQuestions ? <div className="desktop-task-extra"><DrawerField label="Открытые вопросы" value={taskContext.openQuestions} /></div> : null}
+          </section>
+
+          <section className="task-modal-secondary" aria-label="Связи и сроки задачи">
+            <h3 className="desktop-task-extra">Связи и сроки</h3>
+            <div className="desktop-task-extra"><DrawerField label="Направление" value={task.direction || "—"} /></div>
+            <div className="desktop-task-extra"><DrawerField label="Оценка времени" value={timeEstimate || "Не подтверждена"} /></div>
+            <DrawerField label="Зависит от" value={task.blockedBy.join(", ") || "—"} />
+            <DrawerField label="Открывает" value={task.unlocks.join(", ") || "—"} />
+            <DrawerField label="Ждём" value={task.waitingFor || "—"} />
+            <DrawerField label="Следующая проверка" value={formatDate(task.nextCheckDate)} />
+            <DrawerField label="Срок" value={formatDate(task.deadline)} />
+            {taskContext?.canonicalRefs.length ? <div className="desktop-task-extra"><DrawerField label="Материалы" value={taskContext.canonicalRefs.join(", ")} /></div> : null}
+            <DrawerField label="Источник" value={task.source || "—"} />
+          </section>
         </div>
-        <DrawerField label="Почему сейчас" value={task.whyNow} />
-        <DrawerField label="Ожидаемый результат" value={task.expectedResult} />
-        <DrawerField label="Критерий готовности" value={task.acceptanceCriteria} />
-        <DrawerField label="Зависит от" value={task.blockedBy.join(", ") || "—"} />
-        <DrawerField label="Открывает" value={task.unlocks.join(", ") || "—"} />
-        <DrawerField label="Ждём" value={task.waitingFor || "—"} />
-        <DrawerField label="Следующая проверка" value={formatDate(task.nextCheckDate)} />
-        <DrawerField label="Срок" value={formatDate(task.deadline)} />
-        <DrawerField label="Источник" value={task.source || "—"} />
+
+        {taskAction ? (
+          <div className="mobile-task-action-editor">
+            <TaskActionPopover
+              intent={taskAction}
+              draft={draft}
+              acceptanceCriteria={task.acceptanceCriteria || task.expectedResult}
+              preview={preview}
+              onDraftChange={setDraft}
+              onClose={() => setTaskAction(null)}
+              onSubmit={confirmDrawerAction}
+              confirmation={confirmation}
+              feedback={feedback}
+              progressLabel={commandProgress?.label || "Фиксируем состояние задачи"}
+            />
+          </div>
+        ) : null}
+
+        <footer className="mobile-task-console">
+          <section className="mobile-task-time-estimate" aria-label="Оценка времени задачи">
+            <TimeEstimateSelector
+              suggested={suggestedTimeEstimate}
+              confirmed={timeEstimate}
+              showCustom={showCustomEstimate}
+              customValue={customEstimate}
+              onSelect={(estimate) => {
+                if (estimate === "custom") {
+                  setShowCustomEstimate(true);
+                  return;
+                }
+                confirmDrawerTimeEstimate(taskTimeEstimateLabel(estimate));
+              }}
+              onCustomChange={setCustomEstimate}
+              onConfirmCustom={() => confirmDrawerTimeEstimate(customEstimate)}
+            />
+          </section>
+          <button className="mobile-task-primary" type="button" disabled={!canStart || !timeEstimate || confirmation === "saving"} onClick={startOrContinueTask}>
+            {confirmation === "saving" && !taskAction ? <RefreshCw className="spin" size={20} /> : <Play size={21} />}
+            <span>Взять задачу</span>
+          </button>
+          <div>
+            <TaskActionButton icon={FilePlus2} label="Новый факт" active={taskAction === "fact"} disabled={confirmation === "saving"} onClick={() => chooseTaskAction("fact")} />
+            <TaskActionButton icon={CircleHelp} label="Застрял" active={taskAction === "stuck"} disabled={confirmation === "saving"} onClick={() => chooseTaskAction("stuck")} />
+            <TaskActionButton icon={Clock3} label="Жду" active={taskAction === "waiting"} disabled={confirmation === "saving"} onClick={() => chooseTaskAction("waiting")} />
+            <TaskActionButton icon={Check} label="Готово" active={taskAction === "done"} disabled={confirmation === "saving"} onClick={() => chooseTaskAction("done")} />
+          </div>
+          <p className="mobile-task-console-note"><Sparkles size={13} />Все изменения задачи фиксирует GPT в Google Sheets.</p>
+        </footer>
       </aside>
     </>
   );
@@ -1403,6 +2140,50 @@ function buildLanes(tasks: Task[]) {
     });
     return { ...definition, tasks: sortByDependencyDepth(matching, tasks) };
   });
+}
+
+function buildMobileTreeColumns(tasks: Task[], allTasks: Task[]) {
+  const uniqueTasks = Array.from(new Map(tasks.map((task) => [task.id, task])).values());
+  const columns = new Map<number, Task[]>();
+  uniqueTasks.forEach((task) => {
+    const depth = taskDepth(task, allTasks);
+    columns.set(depth, [...(columns.get(depth) || []), task]);
+  });
+  return Array.from(columns.entries())
+    .sort(([leftDepth], [rightDepth]) => leftDepth - rightDepth)
+    .map(([depth, columnTasks]) => ({
+      depth,
+      tasks: [...columnTasks].sort((left, right) => {
+        if (left.id === right.id) return 0;
+        if (left.projectFocus !== right.projectFocus) return left.projectFocus ? -1 : 1;
+        return left.id.localeCompare(right.id);
+      })
+    }));
+}
+
+function buildMobileRouteGroups(tasks: Task[], allTasks: Task[], currentTaskId: string) {
+  const groups = new Map<number, Task[]>();
+  tasks.forEach((task) => {
+    const depth = taskDepth(task, allTasks);
+    groups.set(depth, [...(groups.get(depth) || []), task]);
+  });
+  return Array.from(groups.entries())
+    .sort(([leftDepth], [rightDepth]) => leftDepth - rightDepth)
+    .map(([depth, groupTasks]) => ({
+      depth,
+      tasks: [...groupTasks].sort((left, right) => {
+        if (left.id === currentTaskId) return -1;
+        if (right.id === currentTaskId) return 1;
+        if (left.projectFocus !== right.projectFocus) return left.projectFocus ? -1 : 1;
+        return left.id.localeCompare(right.id);
+      })
+    }));
+}
+
+function mobileTreeColumnLabel(depth: number, tasks: Task[], currentTask: Task) {
+  if (tasks.some((task) => task.id === currentTask.id)) return "Текущий уровень";
+  if (depth === 0) return "Стартовые задачи";
+  return `Уровень ${depth + 1}`;
 }
 
 function sortByDependencyDepth(tasks: Task[], allTasks: Task[]) {
@@ -1430,6 +2211,22 @@ function collectDownstream(start: Task, tasks: Task[]) {
     if (!task) continue;
     result.push(task);
     queue.push(...task.unlocks);
+  }
+  return result;
+}
+
+function collectUpstream(start: Task, tasks: Task[]) {
+  const result: Task[] = [];
+  const visited = new Set<string>([start.id]);
+  const queue = [...start.blockedBy];
+  while (queue.length) {
+    const id = queue.shift()!;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const task = tasks.find((item) => item.id === id);
+    if (!task) continue;
+    result.push(task);
+    queue.push(...task.blockedBy);
   }
   return result;
 }
@@ -1465,6 +2262,46 @@ function statusLabel(status: string) {
   if (status === "READY") return "Ready";
   if (status === "BACKLOG") return "Backlog";
   return status.replaceAll("_", " ");
+}
+
+function suggestTaskTimeEstimate(task: Task): Exclude<TaskTimeEstimate, "custom"> {
+  if (task.priority === "P0") return "5-7h";
+  if (task.priority === "P1") return "3-4h";
+  if (task.priority === "P2") return "up-to-2h";
+  return "3-4h";
+}
+
+function taskTimeEstimateLabel(estimate: TaskTimeEstimate): string {
+  if (estimate === "up-to-2h") return "до 2 часов";
+  if (estimate === "3-4h") return "3–4 часа";
+  if (estimate === "5-7h") return "5–7 часов";
+  if (estimate === "1d") return "1 день";
+  if (estimate === "2d-plus") return "2+ дня";
+  return "свой вариант";
+}
+
+function taskEstimateStorageKey(personId: string, taskId: string): string {
+  return `garment-buro:task-estimate:${personId}:${taskId}`;
+}
+
+function compactTaskDescription(value: string): string {
+  const text = value.trim() || "Задача находится в текущем фокусе проекта.";
+  const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
+  return sentences.slice(0, 2).map((sentence) => sentence.trim()).join(" ");
+}
+
+function displayTaskTitle(value: string): string {
+  return value
+    .replace(/Creator Outreach Kit v0/gi, "Набор материалов для первого контакта с авторами")
+    .replace(/Creator Preview Factory v0/gi, "Шаблон персонального примера для авторов")
+    .replace(/Creator Pipeline v0/gi, "База потенциальных авторов")
+    .replace(/End-to-end paid order test passed/gi, "Полная проверка оплаченного заказа завершена")
+    .replace(/payment authorization\/?hold\s*(?:→|->)\s*capture\/?cancel/gi, "резервирование платежа → списание или отмена")
+    .replace(/\bhandoff\b/gi, "передача")
+    .replace(/\boutreach\b/gi, "первый контакт")
+    .replace(/\bcreator\b/gi, "автор")
+    .replace(/\bpreview\b/gi, "пример")
+    .replace(/\bflow\b/gi, "сценарий");
 }
 
 function shortDate(value?: string) {

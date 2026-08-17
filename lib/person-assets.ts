@@ -8,6 +8,18 @@ const personAssets: Record<string, Record<PersonAssetVariant, string>> = {
   "никита": {
     full: "/assets/people/nikita-full.png",
     avatar: "/assets/people/nikita-avatar.png"
+  },
+  "костя": {
+    full: "/assets/people/kostya-full.png",
+    avatar: "/assets/people/kostya-full.png"
+  },
+  "алена": {
+    full: "/assets/people/alyona-full.png",
+    avatar: "/assets/people/alyona-avatar.png"
+  },
+  "алена баранова": {
+    full: "/assets/people/alyona-full.png",
+    avatar: "/assets/people/alyona-avatar.png"
   }
 };
 
@@ -16,7 +28,7 @@ export function personAsset(name: string, variant: PersonAssetVariant): string |
 }
 
 export function normalizePersonName(name: string): string {
-  return name.trim().toLocaleLowerCase("ru-RU");
+  return name.trim().toLocaleLowerCase("ru-RU").replaceAll("ё", "е");
 }
 
 export function samePerson(left: string, right: string): boolean {
