@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { appPath } from "@/lib/base-path";
 
 export function PwaRegistration() {
   useEffect(() => {
@@ -13,7 +14,7 @@ export function PwaRegistration() {
       return;
     }
 
-    void navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
+    void navigator.serviceWorker.register(appPath("/sw.js"), { updateViaCache: "none" });
   }, []);
 
   return null;

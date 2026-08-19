@@ -1,0 +1,11 @@
+.git
+.github
+.next
+.data
+.env
+.env.*
+node_modules
+desktop-dist
+src-tauri/target
+crucial-context-*.json
+*.log

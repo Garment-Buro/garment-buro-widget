@@ -592,6 +592,9 @@ pub fn run() {
       get_always_on_top
     ])
     .setup(|app| {
+      #[cfg(desktop)]
+      app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()

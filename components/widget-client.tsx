@@ -2,7 +2,7 @@
 
 import { AlertTriangle, Bell, Clock3, Maximize2, Pin, PinOff, RefreshCw, Timer, X } from "lucide-react";
 import Image from "next/image";
-import { type MouseEvent, useCallback, useEffect, useState } from "react";
+import { type MouseEvent, type ReactNode, useCallback, useEffect, useState } from "react";
 import { formatDate } from "@/lib/date";
 import { activePushNotifications } from "@/lib/domain/notification-engine";
 import { formatTimer } from "@/lib/domain/work-session";
@@ -10,6 +10,7 @@ import { personAsset } from "@/lib/person-assets";
 import { rewardTierForPercent } from "@/lib/reward-tier";
 import { useWorkSession } from "@/lib/use-work-session";
 import type { DashboardState } from "@/lib/types";
+import { appPath } from "@/lib/base-path";
 
 const refreshMs = 60_000;
 
@@ -20,7 +21,8 @@ export function WidgetClient({
   onHideWidget,
   onStartDrag,
   isAlwaysOnTop,
-  onToggleAlwaysOnTop
+  onToggleAlwaysOnTop,
+  updateControl
 }: {
   initialState: DashboardState;
   loadState?: () => Promise<DashboardState>;
@@ -29,6 +31,7 @@ export function WidgetClient({
   onStartDrag?: () => void;
   isAlwaysOnTop?: boolean;
   onToggleAlwaysOnTop?: () => void;
+  updateControl?: ReactNode;
 }) {
   const [state, setState] = useState(initialState);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -40,7 +43,7 @@ export function WidgetClient({
         setState(await loadState());
         return;
       }
-      const response = await fetch("/api/dashboard", { cache: "no-store" });
+      const response = await fetch(appPath("/api/dashboard"), { cache: "no-store" });
       if (response.ok) setState((await response.json()) as DashboardState);
     } catch {
       // Keep the last rendered state during a transient network failure.
@@ -88,7 +91,7 @@ export function WidgetClient({
       onOpenDashboard();
       return;
     }
-    window.location.assign("/");
+    window.location.assign(appPath("/"));
   }
 
   function startDrag(event: MouseEvent<HTMLElement>) {
@@ -113,6 +116,7 @@ export function WidgetClient({
             </button>
           ) : null}
           <div className="widget-window-controls">
+            {updateControl}
             {notificationCount ? (
               <span className="widget-notification-indicator" title={`Новых уведомлений: ${notificationCount}`}>
                 <Bell size={15} /><b>{notificationCount}</b>
@@ -148,7 +152,7 @@ export function WidgetClient({
           <aside className="widget-person">
             <div className="widget-person-art">
               <Image
-                src={personAsset(person.name, "full") || "/assets/people/person-placeholder.svg"}
+                src={personAsset(person.name, "full") || appPath("/assets/people/person-placeholder.svg")}
                 alt={`Аватар: ${person.name}`}
                 fill
                 sizes="150px"

@@ -1,5 +1,7 @@
-const cacheName = "garment-buro-pwa-v2";
-const staticAssets = ["/icon.png", "/apple-icon.png"];
+const cacheName = "garment-buro-pwa-v3";
+const scopePath = new URL(self.registration.scope).pathname.replace(/\/$/, "");
+const scopedPath = (path) => `${scopePath}${path}`;
+const staticAssets = [scopedPath("/icon.png"), scopedPath("/apple-icon.png")];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(staticAssets)));

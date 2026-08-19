@@ -1,12 +1,13 @@
 import type { Metadata, Viewport } from "next";
 import { PwaRegistration } from "@/components/pwa-registration";
+import { appPath } from "@/lib/base-path";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "GARMENT BURO / Рабочее пространство",
   description: "Персональное рабочее пространство и карта зависимостей проекта GARMENT BURO.",
   applicationName: "GARMENT BURO",
-  manifest: "/manifest.webmanifest",
+  manifest: appPath("/manifest.webmanifest"),
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -16,8 +17,8 @@ export const metadata: Metadata = {
     telephone: false
   },
   icons: {
-    icon: "/icon.png",
-    apple: "/apple-icon.png"
+    icon: appPath("/icon.png"),
+    apple: appPath("/apple-icon.png")
   }
 };
 

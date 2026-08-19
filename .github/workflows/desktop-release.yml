@@ -1,0 +1,62 @@
+name: Publish desktop release
+
+on:
+  push:
+    tags:
+      - "widget-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            build_args: --bundles nsis
+            rust_targets: x86_64-pc-windows-msvc
+          - platform: macos-14
+            build_args: --target universal-apple-darwin --bundles app,dmg
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          tagName: widget-v__VERSION__
+          releaseName: GARMENT BURO Widget v__VERSION__
+          releaseBody: |
+            Новая версия GARMENT BURO Widget.
+
+            После установки версии 0.1.29 последующие обновления можно устанавливать кнопкой «Обновить» прямо в виджете.
+          releaseDraft: false
+          prerelease: false
+          releaseCommitish: ${{ github.sha }}
+          updaterJsonPreferNsis: true
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+          args: ${{ matrix.build_args }}

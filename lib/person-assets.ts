@@ -24,7 +24,8 @@ const personAssets: Record<string, Record<PersonAssetVariant, string>> = {
 };
 
 export function personAsset(name: string, variant: PersonAssetVariant): string | undefined {
-  return personAssets[normalizePersonName(name)]?.[variant];
+  const asset = personAssets[normalizePersonName(name)]?.[variant];
+  return asset ? appPath(asset) : undefined;
 }
 
 export function normalizePersonName(name: string): string {
@@ -34,3 +35,4 @@ export function normalizePersonName(name: string): string {
 export function samePerson(left: string, right: string): boolean {
   return Boolean(left.trim() && right.trim() && normalizePersonName(left) === normalizePersonName(right));
 }
+import { appPath } from "./base-path.ts";

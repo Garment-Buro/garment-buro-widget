@@ -11,6 +11,8 @@
     "autostart:allow-enable",
     "autostart:allow-is-enabled",
     "notification:default",
-    "store:default"
+    "store:default",
+    "process:default",
+    "updater:default"
   ]
 }

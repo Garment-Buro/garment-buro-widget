@@ -3,9 +3,11 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { enable as enableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { load } from "@tauri-apps/plugin-store";
-import { AlertTriangle, LoaderCircle } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { AlertTriangle, Download, LoaderCircle, RefreshCw } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { DashboardClient } from "@/components/dashboard-client";
 import { WidgetClient } from "@/components/widget-client";
 import { activePushNotifications } from "@/lib/domain/notification-engine";
@@ -15,12 +17,20 @@ import { loadDesktopDashboard } from "./data";
 
 const settingsFile = "garment-buro-settings.json";
 const deliveredNotificationsKey = "deliveredNotificationIds";
+const updateCheckIntervalMs = 4 * 60 * 60 * 1_000;
 const deliveredInProcess = new Set<string>();
 let notificationDelivery: Promise<void> = Promise.resolve();
 
 type DesktopSettings = {
   accessToken: string;
   personName: string;
+};
+
+type AppUpdateState = {
+  phase: "available" | "downloading" | "restarting" | "error";
+  version?: string;
+  progress?: number;
+  message?: string;
 };
 
 export function DesktopApp() {
@@ -30,7 +40,77 @@ export function DesktopApp() {
   const [isBooting, setIsBooting] = useState(true);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
+  const [appUpdate, setAppUpdate] = useState<AppUpdateState | null>(null);
   const [error, setError] = useState("");
+  const pendingUpdateRef = useRef<Update | null>(null);
+  const updateBusyRef = useRef(false);
+
+  const checkForAppUpdate = useCallback(async (showError: boolean) => {
+    if (updateBusyRef.current) return;
+    try {
+      const update = await check({ timeout: 15_000 });
+      if (!update) {
+        pendingUpdateRef.current = null;
+        setAppUpdate(null);
+        return;
+      }
+      pendingUpdateRef.current = update;
+      setAppUpdate({ phase: "available", version: update.version });
+    } catch (updateError) {
+      if (showError) {
+        setAppUpdate({
+          phase: "error",
+          message: `Не удалось проверить обновление: ${errorMessage(updateError)}`
+        });
+      }
+    }
+  }, []);
+
+  const installAppUpdate = useCallback(async () => {
+    const update = pendingUpdateRef.current;
+    if (!update || updateBusyRef.current) {
+      await checkForAppUpdate(true);
+      return;
+    }
+
+    updateBusyRef.current = true;
+    let downloadedBytes = 0;
+    let totalBytes = 0;
+    setAppUpdate({ phase: "downloading", version: update.version, progress: 0 });
+    try {
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          totalBytes = event.data.contentLength || 0;
+          return;
+        }
+        if (event.event === "Progress") {
+          downloadedBytes += event.data.chunkLength;
+          const progress = totalBytes ? Math.min(99, Math.round((downloadedBytes / totalBytes) * 100)) : undefined;
+          setAppUpdate({ phase: "downloading", version: update.version, progress });
+          return;
+        }
+        setAppUpdate({ phase: "downloading", version: update.version, progress: 100 });
+      }, { timeout: 120_000 });
+      setAppUpdate({ phase: "restarting", version: update.version, progress: 100 });
+      await relaunch();
+    } catch (updateError) {
+      updateBusyRef.current = false;
+      setAppUpdate({
+        phase: "error",
+        version: update.version,
+        message: `Не удалось установить обновление: ${errorMessage(updateError)}`
+      });
+    }
+  }, [checkForAppUpdate]);
+
+  const retryAppUpdate = useCallback(async () => {
+    const previousUpdate = pendingUpdateRef.current;
+    pendingUpdateRef.current = null;
+    updateBusyRef.current = false;
+    if (previousUpdate) await previousUpdate.close().catch(() => undefined);
+    setAppUpdate(null);
+    await checkForAppUpdate(true);
+  }, [checkForAppUpdate]);
 
   const loadState = useCallback(async () => {
     if (!settings) throw new Error("Сначала введите код доступа.");
@@ -68,6 +148,15 @@ export function DesktopApp() {
     void boot();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    const initialCheck = window.setTimeout(() => void checkForAppUpdate(false), 1_500);
+    const interval = window.setInterval(() => void checkForAppUpdate(false), updateCheckIntervalMs);
+    return () => {
+      window.clearTimeout(initialCheck);
+      window.clearInterval(interval);
+    };
+  }, [checkForAppUpdate]);
 
   useEffect(() => {
     const unlisten = listen<string>("desktop-view", (event) => {
@@ -128,6 +217,14 @@ export function DesktopApp() {
     void invoke<boolean>("toggle_always_on_top").then(setIsAlwaysOnTop);
   }
 
+  const updateControl = appUpdate ? (
+    <DesktopUpdateControl
+      state={appUpdate}
+      onInstall={() => { void installAppUpdate(); }}
+      onRetry={() => { void retryAppUpdate(); }}
+    />
+  ) : null;
+
   if (isBooting) return <LoadingScreen label="Подключаем рабочее пространство" />;
 
   if (!settings || !state) {
@@ -144,6 +241,7 @@ export function DesktopApp() {
           accessToken={settings.accessToken}
           isAlwaysOnTop={isAlwaysOnTop}
           onToggleAlwaysOnTop={toggleAlwaysOnTop}
+          updateControl={updateControl}
         />
       </div>
     );
@@ -157,7 +255,50 @@ export function DesktopApp() {
       onStartDrag={() => { void getCurrentWebviewWindow().startDragging(); }}
       isAlwaysOnTop={isAlwaysOnTop}
       onToggleAlwaysOnTop={toggleAlwaysOnTop}
+      updateControl={updateControl}
     />
+  );
+}
+
+function DesktopUpdateControl({
+  state,
+  onInstall,
+  onRetry
+}: {
+  state: AppUpdateState;
+  onInstall: () => void;
+  onRetry: () => void;
+}) {
+  if (state.phase === "error") {
+    return (
+      <button className="desktop-update-control is-error" type="button" onClick={onRetry} title={state.message || "Повторить проверку обновления"}>
+        <RefreshCw size={14} />
+        <span>Повторить</span>
+      </button>
+    );
+  }
+
+  const isBusy = state.phase !== "available";
+  const label = state.phase === "available"
+    ? "Обновить"
+    : state.phase === "restarting"
+      ? "Перезапуск"
+      : typeof state.progress === "number"
+        ? `Загрузка ${state.progress}%`
+        : "Загрузка";
+
+  return (
+    <button
+      className={`desktop-update-control ${isBusy ? "is-busy" : ""}`.trim()}
+      type="button"
+      onClick={onInstall}
+      disabled={isBusy}
+      title={state.version ? `Установить GARMENT BURO Widget ${state.version}` : label}
+    >
+      {isBusy ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
+      <span>{label}</span>
+      {state.version && state.phase === "available" ? <small>v{state.version}</small> : null}
+    </button>
   );
 }
 

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "GARMENT BURO Widget",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "identifier": "ru.garmentburo.projectcontrol",
   "build": {
     "frontendDist": "../desktop-dist",
@@ -31,6 +31,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "publisher": "GARMENT BURO",
     "copyright": "Copyright GARMENT BURO",
     "shortDescription": "Живой виджет задач GARMENT BURO",
@@ -45,6 +46,17 @@
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUxMDM5QUZGOTZCQjQ2QkUKUldTK1JydVcvNW9ENFdvQThkSkQ0ZFA5SDY4cEgzcXF1bFdnV1RleTBSWml0eHZxeUNCaDNvWFUK",
+      "endpoints": [
+        "https://github.com/Garment-Buro/garment-buro-widget/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

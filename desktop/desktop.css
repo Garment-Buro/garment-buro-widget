@@ -443,3 +443,55 @@ html.desktop-widget-mode .widget-task-meta svg {
 .desktop-activation-error svg {
   flex: 0 0 auto;
 }
+
+.desktop-update-control {
+  display: inline-flex !important;
+  width: auto !important;
+  min-width: 0;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgba(238, 123, 22, 0.42) !important;
+  border-radius: 999px;
+  padding: 0 10px !important;
+  background: rgba(238, 123, 22, 0.1) !important;
+  color: #b95708 !important;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.desktop-update-control:hover:not(:disabled) {
+  border-color: var(--orange) !important;
+  background: var(--orange) !important;
+  color: #fff !important;
+}
+
+.desktop-update-control:disabled {
+  cursor: wait;
+  opacity: 0.82;
+}
+
+.desktop-update-control.is-error {
+  border-color: rgba(180, 78, 0, 0.45) !important;
+  color: #9f4300 !important;
+}
+
+.desktop-update-control small {
+  font-size: 8px;
+  font-weight: 700;
+  opacity: 0.78;
+}
+
+html.desktop-widget-mode .desktop-update-control {
+  height: 24px;
+  padding: 0 7px !important;
+  font-size: 8px;
+}
+
+html.desktop-widget-mode .desktop-update-control small {
+  display: none;
+}

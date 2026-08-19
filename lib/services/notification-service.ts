@@ -20,7 +20,7 @@ export async function acknowledgeNotification(
     });
   }
 
-  const response = await fetch("/api/notification-ack", {
+  const response = await fetch(appPath("/api/notification-ack"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ notificationId, recipientId }),
@@ -34,3 +34,4 @@ export async function acknowledgeNotification(
 function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
+import { appPath } from "../base-path.ts";

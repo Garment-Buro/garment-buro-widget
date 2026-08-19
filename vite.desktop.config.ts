@@ -7,6 +7,9 @@ export default defineConfig({
   base: "./",
   publicDir: resolve(__dirname, "public"),
   plugins: [react()],
+  define: {
+    "process.env.NEXT_PUBLIC_BASE_PATH": JSON.stringify("")
+  },
   resolve: {
     alias: {
       "@": resolve(__dirname),

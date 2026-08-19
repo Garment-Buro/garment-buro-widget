@@ -72,6 +72,7 @@ import {
 } from "@/lib/services/task-action-service";
 import { useWorkSession } from "@/lib/use-work-session";
 import type { DashboardState, DependencySummary, Person, ProgressGate, Task } from "@/lib/types";
+import { appPath } from "@/lib/base-path";
 
 export type { TaskActionSubmission } from "@/lib/services/task-action-service";
 
@@ -147,7 +148,8 @@ export function DashboardClient({
   onConfirmTaskAction,
   accessToken,
   isAlwaysOnTop,
-  onToggleAlwaysOnTop
+  onToggleAlwaysOnTop,
+  updateControl
 }: {
   initialState: DashboardState;
   loadState?: () => Promise<DashboardState>;
@@ -156,6 +158,7 @@ export function DashboardClient({
   accessToken?: string;
   isAlwaysOnTop?: boolean;
   onToggleAlwaysOnTop?: () => void;
+  updateControl?: ReactNode;
 }) {
   const [state, setState] = useState(initialState);
   const [view, setView] = useState<WorkspaceView>("personal");
@@ -175,7 +178,7 @@ export function DashboardClient({
         setState(await loadState());
         return;
       }
-      const response = await fetch("/api/dashboard", { cache: "no-store" });
+      const response = await fetch(appPath("/api/dashboard"), { cache: "no-store" });
       if (response.ok) setState((await response.json()) as DashboardState);
     } catch {
       // Preserve the current screen while the endpoint is temporarily unavailable.
@@ -285,10 +288,11 @@ export function DashboardClient({
           onOpenTree={() => setView("tree")}
           onOpenTask={setSelectedTask}
           onFocusTask={setFocusedTaskId}
-          onExit={onExit || (() => window.location.assign("/widget"))}
+          onExit={onExit || (() => window.location.assign(appPath("/widget")))}
           onConfirmTaskAction={confirmTaskAction}
           isAlwaysOnTop={isAlwaysOnTop}
           onToggleAlwaysOnTop={onToggleAlwaysOnTop}
+          updateControl={updateControl}
         />
       ) : (
         <TaskTree
@@ -307,10 +311,11 @@ export function DashboardClient({
           onScale={setTreeScale}
           onViewMode={setTreeViewMode}
           onBack={() => setView("personal")}
-          onCollapse={onExit || (() => window.location.assign("/widget"))}
+          onCollapse={onExit || (() => window.location.assign(appPath("/widget")))}
           onOpenTask={setSelectedTask}
           isAlwaysOnTop={isAlwaysOnTop}
           onToggleAlwaysOnTop={onToggleAlwaysOnTop}
+          updateControl={updateControl}
         />
       )}
       {selectedTask ? (
@@ -347,7 +352,8 @@ function PersonalWorkspace({
   onExit,
   onConfirmTaskAction,
   isAlwaysOnTop,
-  onToggleAlwaysOnTop
+  onToggleAlwaysOnTop,
+  updateControl
 }: {
   state: DashboardState;
   person: Person;
@@ -371,6 +377,7 @@ function PersonalWorkspace({
   onConfirmTaskAction: (submission: TaskActionSubmission, onProgress?: (progress: TaskCommandProgress) => void) => Promise<TaskActionSaveResult | undefined>;
   isAlwaysOnTop?: boolean;
   onToggleAlwaysOnTop?: () => void;
+  updateControl?: ReactNode;
 }) {
   const [taskAction, setTaskAction] = useState<TaskActionIntent | null>(null);
   const [taskActionDraft, setTaskActionDraft] = useState<TaskActionDraft>(emptyTaskActionDraft);
@@ -601,6 +608,7 @@ function PersonalWorkspace({
           </div>
           <div className="live-controls">
             <span className={`live-state ${sourceTone !== "LIVE" ? "is-warning" : ""}`}><i /> {sourceTone}</span>
+            {updateControl}
             {onToggleAlwaysOnTop ? (
               <button
                 className={`icon-button ${isAlwaysOnTop ? "is-active" : ""}`.trim()}
@@ -1131,7 +1139,8 @@ function TaskTree({
   onCollapse,
   onOpenTask,
   isAlwaysOnTop,
-  onToggleAlwaysOnTop
+  onToggleAlwaysOnTop,
+  updateControl
 }: {
   state: DashboardState;
   person: Person;
@@ -1152,6 +1161,7 @@ function TaskTree({
   onOpenTask: (task: Task) => void;
   isAlwaysOnTop?: boolean;
   onToggleAlwaysOnTop?: () => void;
+  updateControl?: ReactNode;
 }) {
   const [hoveredOwnTaskId, setHoveredOwnTaskId] = useState("");
   const mobileTreeCanvasRef = useRef<HTMLDivElement>(null);
@@ -1336,6 +1346,7 @@ function TaskTree({
             <p>Полная карта задач и зависимостей проекта Commercial MVP</p>
           </div>
           <div className="tree-toolbar">
+            {updateControl}
             {onToggleAlwaysOnTop ? (
               <button
                 className={`toolbar-button ${isAlwaysOnTop ? "is-active" : ""}`.trim()}

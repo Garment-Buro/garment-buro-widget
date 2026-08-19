@@ -1,6 +1,7 @@
 import { buildTaskAssistantClientContext } from "@/lib/ai/client-context";
 import type { TaskAssistantMode, TaskAssistantRequest, TaskAssistantResponse } from "@/lib/ai/types";
 import type { DashboardState } from "@/lib/types";
+import { appPath } from "../base-path.ts";
 
 export type TaskActionIntent = "reject" | "stuck" | "waiting" | "fact" | "done" | "session_close";
 export type TaskCommandIntent = "accept" | "session_start" | TaskActionIntent;
@@ -79,7 +80,7 @@ export async function requestTaskAssistant(
     return invoke<TaskAssistantResponse>("ask_task_assistant", { request: payload });
   }
 
-  const response = await fetch("/api/assistant", {
+  const response = await fetch(appPath("/api/assistant"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -112,7 +113,7 @@ export async function submitTaskCommand(
       const { invoke } = await import("@tauri-apps/api/core");
       result = await invoke<TaskActionSaveResult>("submit_task_command", { token: accessToken, request });
     } else {
-      const response = await fetch("/api/task-command", {
+      const response = await fetch(appPath("/api/task-command"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(request),

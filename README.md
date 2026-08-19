@@ -130,4 +130,33 @@ The installer is generated under `src-tauri/target/release/bundle/nsis/`. The wo
 
 Task data never requires an app update: Google Sheet and Apps Script changes appear on the next refresh. UI and native-app updates require a new signed release.
 
-Tauri updater dependencies are present, but the updater is intentionally not initialized until a private release location and signing key are configured. Before distributing automatic updates, choose the release host, generate the Tauri updater key pair, keep the private key outside the repository, add the public key and endpoint to `tauri.conf.json`, and publish signed updater artifacts. macOS distribution without security warnings additionally requires Apple Developer ID signing and notarization; unsigned internal builds can still be tested manually on the employee's Mac.
+Version `0.1.29` enables the signed Tauri updater. The app checks the latest public GitHub Release after startup and every four hours. When a newer version exists, an `Обновить` button appears in the compact widget and full dashboard; it downloads the signed package, installs it, and relaunches the app.
+
+The updater private key is stored outside the repository and in the `TAURI_SIGNING_PRIVATE_KEY` GitHub Actions secret. Only the public verification key belongs in `tauri.conf.json`. Never replace or lose the private key: installed clients trust this exact key for future releases.
+
+Publish a desktop release from an up-to-date `main` branch:
+
+```bash
+git tag widget-v0.1.30
+git push origin widget-v0.1.30
+```
+
+`.github/workflows/desktop-release.yml` creates the Windows NSIS installer, universal macOS bundle, updater signatures, and `latest.json`. The release version must match `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`. Existing `0.1.28` clients do not contain the updater and must install `0.1.29` manually once; all later upgrades can use the in-app button.
+
+macOS distribution without first-install security warnings additionally requires Apple Developer ID signing and notarization. The updater has its own mandatory signature verification, but that does not replace Apple notarization.
+
+## Mobile / PWA Deployment
+
+The production web app supports a build-time `NEXT_PUBLIC_BASE_PATH`. The server compose file builds it at `/gb-widget`, joins the existing `plus2opacity_default` Docker network, keeps credentials outside the image, and stores the normalized dashboard snapshot in a Docker volume.
+
+Server files:
+
+- `Dockerfile` — standalone Next.js production image;
+- `docker-compose.server.yml` — isolated widget service;
+- `deploy/nginx-gb-widget.conf` — HTTPS reverse-proxy locations that must appear before the store's generic `/api`, static-file regex, and `/` locations.
+
+After deployment, open `https://garment-buro.ru/gb-widget/` on a phone. On iPhone use Safari → Share → `На экран «Домой»`; on Android use the browser menu → `Установить приложение`. The service worker and manifest are scoped to `/gb-widget/` and do not affect the main shop.
+
+## Branches
+
+`main` is the canonical working version. New work uses short-lived `feature/<topic>` branches; version-number and `codex/` branches are no longer part of the workflow and should be deleted after integration.
