@@ -7,7 +7,8 @@ const basePath = configuredBasePath
 const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
-  basePath
+  basePath,
+  trailingSlash: true
 };
 
 export default nextConfig;

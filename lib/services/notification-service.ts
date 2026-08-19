@@ -20,7 +20,7 @@ export async function acknowledgeNotification(
     });
   }
 
-  const response = await fetch(appPath("/api/notification-ack"), {
+  const response = await fetch(appPath("/api/notification-ack/"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ notificationId, recipientId }),

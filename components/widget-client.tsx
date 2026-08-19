@@ -43,7 +43,7 @@ export function WidgetClient({
         setState(await loadState());
         return;
       }
-      const response = await fetch(appPath("/api/dashboard"), { cache: "no-store" });
+      const response = await fetch(appPath("/api/dashboard/"), { cache: "no-store" });
       if (response.ok) setState((await response.json()) as DashboardState);
     } catch {
       // Keep the last rendered state during a transient network failure.
