@@ -7,12 +7,13 @@ import { getDashboardState } from "@/lib/data";
 const openAiModel = process.env.OPENAI_MODEL || "gpt-5.6-terra";
 
 export async function answerTaskAssistant(
-  request: Omit<TaskAssistantRequest, "context">
+  request: Omit<TaskAssistantRequest, "context">,
+  personName?: string
 ): Promise<TaskAssistantResponse> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY не настроен на сервере.");
 
-  const dashboard = await getDashboardState();
+  const dashboard = await getDashboardState(personName);
   const context = await buildAssistantDriveContext(
     dashboard,
     request.taskId,

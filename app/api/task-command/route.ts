@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildTaskAssistantClientContext } from "@/lib/ai/client-context";
+import { getWebSession } from "@/lib/auth/web-session";
 import { getDashboardState } from "@/lib/data";
 import { callAppsScriptGateway } from "@/lib/services/apps-script-gateway";
 import type { TaskActionSaveResult, TaskCommandIntent } from "@/lib/services/task-action-service";
@@ -19,6 +20,8 @@ const intents = new Set<TaskCommandIntent>([
 
 export async function POST(request: Request) {
   try {
+    const session = getWebSession();
+    if (!session) return NextResponse.json({ error: "Требуется вход в виджет." }, { status: 401 });
     const body = await request.json() as Record<string, unknown>;
     const taskId = String(body.taskId || "").trim();
     const commandId = String(body.commandId || "").trim();
@@ -40,7 +43,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Для рабочей сессии нужен корректный SESSION_ID." }, { status: 400 });
     }
 
-    const dashboard = await getDashboardState();
+    const dashboard = await getDashboardState(session.personName);
     const person = dashboard.person;
     const task = dashboard.tasks.find((item) => item.id === taskId);
     if (!person || !task) {

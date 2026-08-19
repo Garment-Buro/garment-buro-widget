@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { answerTaskAssistant } from "@/lib/ai/task-assistant";
+import { getWebSession } from "@/lib/auth/web-session";
 import type { TaskAssistantMode } from "@/lib/ai/types";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +9,8 @@ const modes = new Set<TaskAssistantMode>(["start", "blocker", "ask", "acceptance
 
 export async function POST(request: Request) {
   try {
+    const session = getWebSession();
+    if (!session) return NextResponse.json({ error: "Требуется вход в виджет." }, { status: 401 });
     const body = await request.json() as { taskId?: string; mode?: TaskAssistantMode; message?: string };
     const taskId = String(body.taskId || "").trim();
     const mode = body.mode;
@@ -19,7 +22,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Запрос слишком длинный. Сократите его до 4000 символов." }, { status: 400 });
     }
 
-    return NextResponse.json(await answerTaskAssistant({ taskId, mode, message }), {
+    return NextResponse.json(await answerTaskAssistant({ taskId, mode, message }, session.personName), {
       headers: { "Cache-Control": "no-store" }
     });
   } catch (error) {

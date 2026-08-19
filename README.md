@@ -157,6 +157,8 @@ Server files:
 
 After deployment, open `https://garment-buro.ru/gb-widget/` on a phone. On iPhone use Safari → Share → `На экран «Домой»`; on Android use the browser menu → `Установить приложение`. The service worker and manifest are scoped to `/gb-widget/` and do not affect the main shop.
 
+The web/PWA entry screen asks for the employee name and shared workspace access code. A successful login creates a signed, HttpOnly, 30-day session bound to the canonical active employee from `PEOPLE`; dashboard and write APIs use that session's employee and reject unauthenticated requests. Use `WEB_SESSION_SECRET` to rotate web sessions independently, or omit it to derive session signatures from `APPS_SCRIPT_ACCESS_TOKEN`. The `Сменить` control signs out without affecting another employee's device.
+
 ## Branches
 
 `main` is the canonical working version. New work uses short-lived `feature/<topic>` branches; version-number and `codex/` branches are no longer part of the workflow and should be deleted after integration.

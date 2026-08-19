@@ -1,9 +1,18 @@
 import { DashboardClient } from "@/components/dashboard-client";
+import { WebAccountControl } from "@/components/web-account-control";
+import { WebLogin } from "@/components/web-login";
+import { getWebSession } from "@/lib/auth/web-session";
 import { getDashboardState } from "@/lib/data";
 
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
-  const state = await getDashboardState();
-  return <DashboardClient initialState={state} />;
+  const session = getWebSession();
+  if (!session) return <WebLogin />;
+
+  const state = await getDashboardState(session.personName);
+  if (!state.person) {
+    return <WebLogin initialName={session.personName} message="Профиль больше не доступен. Войдите заново." />;
+  }
+  return <DashboardClient initialState={state} updateControl={<WebAccountControl personName={state.person.name} />} />;
 }

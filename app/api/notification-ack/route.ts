@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getWebSession } from "@/lib/auth/web-session";
 import { getDashboardState } from "@/lib/data";
 import { callAppsScriptGateway } from "@/lib/services/apps-script-gateway";
 import type { NotificationAckResult } from "@/lib/services/notification-service";
@@ -7,6 +8,8 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   try {
+    const session = getWebSession();
+    if (!session) return NextResponse.json({ error: "Требуется вход в виджет." }, { status: 401 });
     const body = await request.json() as { notificationId?: unknown; recipientId?: unknown };
     const notificationId = String(body.notificationId || "").trim();
     const requestedRecipientId = String(body.recipientId || "").trim();
@@ -14,7 +17,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Некорректный NOTIFICATION_ID." }, { status: 400 });
     }
 
-    const dashboard = await getDashboardState();
+    const dashboard = await getDashboardState(session.personName);
     const recipientId = dashboard.person?.id || "";
     if (!recipientId || (requestedRecipientId && requestedRecipientId.toLowerCase() !== recipientId.toLowerCase())) {
       return NextResponse.json({ error: "Получатель уведомления не совпадает с dashboard-пользователем." }, { status: 403 });
