@@ -7,7 +7,6 @@ export const metadata: Metadata = {
   title: "GARMENT BURO / Рабочее пространство",
   description: "Персональное рабочее пространство и карта зависимостей проекта GARMENT BURO.",
   applicationName: "GARMENT BURO",
-  manifest: appPath("/manifest.webmanifest"),
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -32,6 +31,9 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ru">
+      <head>
+        <link rel="manifest" href={appPath("/manifest.webmanifest")} crossOrigin="use-credentials" />
+      </head>
       <body>
         {children}
         <PwaRegistration />

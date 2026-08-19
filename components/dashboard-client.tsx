@@ -1855,7 +1855,11 @@ function taskRelationLabel(task: Task) {
 function updatedTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value || "—";
-  return new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" }).format(date);
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: "Europe/Moscow",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
 }
 
 function NavItem({ icon: Icon, label, active }: { icon: IconComponent; label: string; active?: boolean }) {
