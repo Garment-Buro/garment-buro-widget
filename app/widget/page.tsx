@@ -14,9 +14,9 @@ export const metadata: Metadata = {
 
 export default async function WidgetPage() {
   const session = getWebSession();
-  if (!session) return <WebLogin />;
+  if (!session) return <WebLogin redirectTo="/widget" />;
 
   const state = await getDashboardState(session.personName);
-  if (!state.person) return <WebLogin initialName={session.personName} message="Профиль больше не доступен. Войдите заново." />;
+  if (!state.person) return <WebLogin initialName={session.personName} message="Профиль больше не доступен. Войдите заново." redirectTo="/widget" />;
   return <WidgetClient initialState={state} updateControl={<WebAccountControl personName={state.person.name} compact />} />;
 }

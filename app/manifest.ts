@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "GARMENT BURO — рабочее пространство",
     short_name: "GARMENT BURO",
     description: "Фокус, задачи и состояние проекта GARMENT BURO.",
-    start_url: appPath("/"),
+    start_url: appPath("/widget"),
     scope: `${appBasePath || ""}/`,
     display: "standalone",
     orientation: "portrait-primary",

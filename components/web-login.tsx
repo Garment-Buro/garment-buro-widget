@@ -5,7 +5,15 @@ import Image from "next/image";
 import { FormEvent, useState } from "react";
 import { appPath } from "@/lib/base-path";
 
-export function WebLogin({ initialName = "", message = "" }: { initialName?: string; message?: string }) {
+export function WebLogin({
+  initialName = "",
+  message = "",
+  redirectTo = "/"
+}: {
+  initialName?: string;
+  message?: string;
+  redirectTo?: string;
+}) {
   const [personName, setPersonName] = useState(initialName);
   const [accessCode, setAccessCode] = useState("");
   const [showCode, setShowCode] = useState(false);
@@ -26,7 +34,7 @@ export function WebLogin({ initialName = "", message = "" }: { initialName?: str
       });
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error || "Не удалось войти в рабочее пространство.");
-      window.location.replace(appPath("/"));
+      window.location.replace(appPath(redirectTo));
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Не удалось войти в рабочее пространство.");
       setIsSubmitting(false);
