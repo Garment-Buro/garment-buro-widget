@@ -237,12 +237,20 @@ test("17b. Apps Script recovers partial writes before marking a session SYNCED",
   const recoveryStart = gatewayCode.indexOf("function recoverCommandWrite_");
   const recoveryEnd = gatewayCode.indexOf("function askGptForTaskPlan_", recoveryStart);
   const recoveryCode = gatewayCode.slice(recoveryStart, recoveryEnd);
+  const taskMutationStart = gatewayCode.indexOf("function updateTaskFromPlan_");
+  const taskMutationEnd = gatewayCode.indexOf("function appendSessionHandoff_", taskMutationStart);
+  const taskMutationCode = gatewayCode.slice(taskMutationStart, taskMutationEnd);
 
   assert.match(gatewayCode, /WIDGET_PLAN:/);
   assert.match(gatewayCode, /updateIdForCommand_/);
   assert.doesNotMatch(gatewayCode, /"ACTION_ID"/);
   assert.ok(recoveryCode.indexOf("verifyCommandWrite_") < recoveryCode.indexOf('"SYNCED"'));
   assert.match(gatewayCode, /requestedSession\.SYNC_STATUS === "SYNCED"/);
+  assert.match(recoveryCode, /plan\.targetStatus !== "UNCHANGED"/);
+  assert.ok(taskMutationCode.indexOf('"RESULT"') < taskMutationCode.indexOf('"STATUS"'));
+  assert.match(gatewayCode, /Verification read: WAITING_FOR не совпал/);
+  assert.match(gatewayCode, /Verification read: NEXT_CHECK_DATE не совпал/);
+  assert.match(gatewayCode, /Verification read: RESULT не совпал/);
   assert.match(entrypointCode, /action === "taskCommand"/);
   assert.match(entrypointCode, /handleNotificationAckRequest_/);
   assert.match(entrypointCode, /capabilities: gatewayCapabilities_/);

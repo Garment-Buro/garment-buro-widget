@@ -92,7 +92,7 @@ function handleTaskCommandRequest_(payload) {
     try {
       var sheetsWriteStartedAt = Date.now();
       appendTaskUpdate_(updatesSheet, request, task, plan);
-      if (plan.targetStatus !== "UNCHANGED" && plan.targetStatus !== task.STATUS) {
+      if (plan.targetStatus !== "UNCHANGED") {
         updateTaskFromPlan_(tasksSheet, task.__rowNumber, plan);
       }
       timings.sheetsWriteMs = Date.now() - sheetsWriteStartedAt;
@@ -123,7 +123,7 @@ function recoverCommandWrite_(tasksSheet, updatesSheet, handoffsSheet, request, 
     throw new Error("Partial recovery: в TASK_UPDATES нет сохранённого mutation plan.");
   }
   var plan = snapshot.plan;
-  if (plan.targetStatus !== "UNCHANGED" && plan.targetStatus !== task.STATUS) {
+  if (plan.targetStatus !== "UNCHANGED") {
     updateTaskFromPlan_(tasksSheet, task.__rowNumber, plan);
   }
   if (request.intent === "session_close" && !sessionRow) {
@@ -402,12 +402,13 @@ function updateTaskUpdateSyncStatus_(sheet, commandId, status) {
 
 function updateTaskFromPlan_(sheet, rowNumber, plan) {
   var headers = headers_(sheet);
-  setCellByHeader_(sheet, rowNumber, headers, "STATUS", plan.targetStatus);
-  setCellByHeader_(sheet, rowNumber, headers, "LAST_UPDATED", nowText_());
   if (plan.waitingFor) setCellByHeader_(sheet, rowNumber, headers, "WAITING_FOR", plan.waitingFor);
   else if (["WAITING_EXTERNAL", "BLOCKED"].indexOf(plan.targetStatus) < 0) setCellByHeader_(sheet, rowNumber, headers, "WAITING_FOR", "");
   if (plan.nextCheck) setCellByHeader_(sheet, rowNumber, headers, "NEXT_CHECK_DATE", plan.nextCheck);
   if (plan.result) setCellByHeader_(sheet, rowNumber, headers, "RESULT", plan.result);
+  setCellByHeader_(sheet, rowNumber, headers, "LAST_UPDATED", nowText_());
+  // STATUS is the commit marker. Write it last so a partial failure stays recoverable.
+  setCellByHeader_(sheet, rowNumber, headers, "STATUS", plan.targetStatus);
 }
 
 function appendSessionHandoff_(sheet, request, plan, syncStatus) {
@@ -444,8 +445,22 @@ function verifyCommandWrite_(tasksSheet, updatesSheet, request, plan) {
   var update = findRecord_(updatesSheet, "UPDATE_ID", updateIdForCommand_(request.commandId));
   if (!update) throw new Error("Verification read: TASK_UPDATE не найден.");
   var task = findRecord_(tasksSheet, "TASK_ID", request.taskId);
+  if (!task) throw new Error("Verification read: TASK не найден.");
   var expectedStatus = plan.targetStatus === "UNCHANGED" ? task.STATUS : plan.targetStatus;
-  if (!task || task.STATUS !== expectedStatus) throw new Error("Verification read: статус TASK не совпал.");
+  if (task.STATUS !== expectedStatus) throw new Error("Verification read: статус TASK не совпал.");
+  if (plan.targetStatus === "UNCHANGED") return;
+  if (plan.waitingFor && task.WAITING_FOR !== String(plan.waitingFor).trim()) {
+    throw new Error("Verification read: WAITING_FOR не совпал.");
+  }
+  if (!plan.waitingFor && ["WAITING_EXTERNAL", "BLOCKED"].indexOf(plan.targetStatus) < 0 && task.WAITING_FOR) {
+    throw new Error("Verification read: WAITING_FOR не очищен.");
+  }
+  if (plan.nextCheck && task.NEXT_CHECK_DATE !== String(plan.nextCheck).trim()) {
+    throw new Error("Verification read: NEXT_CHECK_DATE не совпал.");
+  }
+  if (plan.result && task.RESULT !== String(plan.result).trim()) {
+    throw new Error("Verification read: RESULT не совпал.");
+  }
 }
 
 function planSnapshotText_(request, plan) {
