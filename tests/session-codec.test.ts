@@ -42,3 +42,21 @@ test("web data and write routes bind requests to the signed employee session", a
   routes.slice(0, 3).forEach((route) => assert.match(route, /getDashboardState\(session\.personName\)/));
   assert.match(routes[3], /answerTaskAssistant\([^;]+session\.personName\)/s);
 });
+
+test("web dashboard exposes an explicit logout control in every signed-in state", async () => {
+  const [control, dashboard, fullPage, compactPage, logoutRoute] = await Promise.all([
+    readFile(new URL("../components/web-account-control.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/dashboard-client.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/widget/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/auth/logout/route.ts", import.meta.url), "utf8")
+  ]);
+
+  assert.match(control, /LogOut/);
+  assert.match(control, /Выйти из профиля/);
+  assert.match(control, /api\/auth\/logout/);
+  assert.match(dashboard, /account-empty-toolbar[^}]+updateControl/s);
+  assert.match(fullPage, /WebAccountControl/);
+  assert.match(compactPage, /WebAccountControl/);
+  assert.match(logoutRoute, /clearWebSession\(\)/);
+});

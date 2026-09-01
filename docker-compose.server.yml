@@ -4,11 +4,11 @@ services:
     build:
       context: .
       args:
-        NEXT_PUBLIC_BASE_PATH: /gb-widget
+        NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-}
     env_file:
       - .env.local
     environment:
-      NEXT_PUBLIC_BASE_PATH: /gb-widget
+      NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-}
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-service-account.json
     volumes:
       - ./crucial-context-505515-e1-6275eaef7627.json:/run/secrets/google-service-account.json:ro
@@ -17,7 +17,7 @@ services:
       - garment-web
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/gb-widget/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000${NEXT_PUBLIC_BASE_PATH:-}/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3

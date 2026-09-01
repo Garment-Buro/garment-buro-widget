@@ -147,15 +147,16 @@ macOS distribution without first-install security warnings additionally requires
 
 ## Mobile / PWA Deployment
 
-The production web app supports a build-time `NEXT_PUBLIC_BASE_PATH`. The server compose file builds it at `/gb-widget`, joins the existing `plus2opacity_default` Docker network, keeps credentials outside the image, and stores the normalized dashboard snapshot in a Docker volume.
+The production web app supports a build-time `NEXT_PUBLIC_BASE_PATH`. The server compose file now builds it at the root of `https://widget.garment-buro.ru/`, joins the existing `plus2opacity_default` Docker network, keeps credentials outside the image, and stores the normalized dashboard snapshot in a Docker volume. Set `NEXT_PUBLIC_BASE_PATH=/gb-widget` only for a temporary legacy path deployment.
 
 Server files:
 
 - `Dockerfile` — standalone Next.js production image;
 - `docker-compose.server.yml` — isolated widget service;
-- `deploy/nginx-gb-widget.conf` — HTTPS reverse-proxy locations that must appear before the store's generic `/api`, static-file regex, and `/` locations.
+- `deploy/nginx-widget-subdomain.conf` — dedicated HTTPS reverse proxy for `widget.garment-buro.ru`;
+- `deploy/nginx-gb-widget.conf` — redirects old `/gb-widget` bookmarks to the subdomain.
 
-After deployment, open `https://garment-buro.ru/gb-widget/` on a phone. On iPhone use Safari → Share → `На экран «Домой»`; on Android use the browser menu → `Установить приложение`. The installed PWA starts in the full dashboard view; the compact `/widget` route remains reserved for the desktop widget. The service worker and manifest are scoped to `/gb-widget/` and do not affect the main shop.
+After deployment, open `https://widget.garment-buro.ru/` on a phone. On iPhone use Safari → Share → `На экран «Домой»`; on Android use the browser menu → `Установить приложение`. The installed PWA starts in the full dashboard view; the compact `/widget` route remains reserved for the desktop widget. The service worker and manifest are scoped to this host and do not affect the main shop.
 
 The web/PWA entry screen asks for the employee name and shared workspace access code. A successful login creates a signed, HttpOnly, 30-day session bound to the canonical active employee from `PEOPLE`; dashboard and write APIs use that session's employee and reject unauthenticated requests. Use `WEB_SESSION_SECRET` to rotate web sessions independently, or omit it to derive session signatures from `APPS_SCRIPT_ACCESS_TOKEN`. The `Сменить` control signs out without affecting another employee's device.
 

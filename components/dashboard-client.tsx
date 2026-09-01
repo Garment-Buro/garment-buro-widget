@@ -259,6 +259,7 @@ export function DashboardClient({
   if (!currentTask) {
     return (
       <main className="empty-state account-empty-state">
+        {updateControl ? <div className="account-empty-toolbar">{updateControl}</div> : null}
         <PersonArtwork person={person} variant="avatar" />
         <h1>{person.name}</h1>
         <p>Профиль активен. Задачи пока не назначены.</p>
